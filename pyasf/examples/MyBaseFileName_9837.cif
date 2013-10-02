@@ -1,0 +1,77 @@
+
+#(C) 2013 by Fachinformationszentrum Karlsruhe.  All rights reserved.
+data_9837-ICSD
+_database_code_ICSD 9837
+_audit_creation_date 1980-01-01
+_audit_update_record 2010-02-01
+_chemical_name_systematic 'Calcium titanium silicate oxide'
+_chemical_formula_structural 'Ca Ti (Si O4) O'
+_chemical_formula_sum 'Ca1 O5 Si1 Ti1'
+_chemical_name_structure_type CaTiSiO5
+_chemical_name_mineral Titanite
+_exptl_crystal_density_diffrn 3.52
+_cell_measurement_temperature 298.
+_publ_section_title
+
+;
+High-temperature structural study of the P21/A - A2/A phase transition in
+synthetic titanite, Ca Ti Si O5
+;
+loop_
+_citation_id
+_citation_journal_full
+_citation_year
+_citation_journal_volume
+_citation_page_first
+_citation_page_last
+_citation_journal_id_ASTM
+primary 'American Mineralogist' 1976 61 435 447 AMMIAY
+loop_
+_publ_author_name
+'Taylor, M.'
+'Brown, G.E.'
+_cell_length_a 7.068(1)
+_cell_length_b 8.714(3)
+_cell_length_c 6.562(2)
+_cell_angle_alpha 90.
+_cell_angle_beta 113.82
+_cell_angle_gamma 90.
+_cell_volume 369.73
+_cell_formula_units_Z 4
+_symmetry_space_group_name_H-M 'P 1 21/a 1'
+_symmetry_Int_Tables_number 14
+_refine_ls_R_factor_all 0.048
+loop_
+_symmetry_equiv_pos_site_id
+_symmetry_equiv_pos_as_xyz
+1 'x+1/2, -y+1/2, z'
+2 '-x, -y, -z'
+3 '-x+1/2, y+1/2, -z'
+4 'x, y, z'
+loop_
+_atom_type_symbol
+_atom_type_oxidation_number
+Ca2+ 2
+Ti4+ 4
+Si4+ 4
+O2- -2
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_symmetry_multiplicity
+_atom_site_Wyckoff_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+_atom_site_B_iso_or_equiv
+_atom_site_occupancy
+_atom_site_attached_hydrogens
+Ca1 Ca2+ 4 e 0.2439(6) 0.4184(2) 0.2513(8) 1.26(5) 1. 0
+Ti1 Ti4+ 4 e 0.5124(2) 0.2557(4) 0.7498(4) 0.60(4) 1. 0
+Si1 Si4+ 4 e 0.7494(7) 0.4327(2) 0.2493(9) 0.40(5) 1. 0
+O1 O2- 4 e 0.7497(10) 0.3212(6) 0.7498(15) 0.7(1) 1. 0
+O2 O2- 4 e 0.9095(9) 0.3175(8) 0.4329(13) 0.75(15) 1. 0
+O3 O2- 4 e 0.0870(9) 0.1851(8) 0.0626(12) 0.60(14) 1. 0
+O4 O2- 4 e 0.3813(10) 0.4586(9) 0.6448(13) 0.52(14) 1. 0
+O5 O2- 4 e 0.6178(10) 0.0381(9) 0.8520(13) 0.73(15) 1. 0
+#End of TTdata_9837-ICSD

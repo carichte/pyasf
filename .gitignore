@@ -1,0 +1,8 @@
+*.[oa]
+*.so
+*.zip
+*.tar.gz
+*.tar
+*.tgz
+trash/
+build/

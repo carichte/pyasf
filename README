@@ -1,0 +1,19 @@
+pyasf - symbolic computing of anisotropic resonant scattering factor 
+*************************************************************
+
+Author:  Carsten Richter
+Contact: carsten.richter@desy.de
+      or carsten.richter@physik.tu-freiberg.de
+Website: http://desy.de/~crichter/
+
+
+
+Requirements:
+    - python 2
+    - Python Packages:
+        - numpy
+        - sympy
+        - sqlite3
+        - pickle
+
+
