@@ -20,7 +20,7 @@ from sympy.utilities import lambdify
 import deltaf
 import types
 
-mydict = dict({"Abs":abs})
+#mydict = dict({"Abs":abs})
 DEBUG=False
 #DEBUG=True
 #epsilon=1.e-10
@@ -34,12 +34,13 @@ DEBUG=False
 dictcall = lambda self, d: self.__call__(*[d[k] for k in self.kw])
 
 
-def makefunc(expr):
+def makefunc(expr, mathmodule = "numpy"):
     symbols = sorted(filter(lambda x: x.is_Symbol, expr.atoms()))
-    func = lambdify(symbols, expr, ("numpy", mydict))
+    func = lambdify(symbols, expr, mathmodule)
     func.kw = symbols
     func.kwstr = map(lambda x: x.name, symbols)
     func.dictcall = types.MethodType(dictcall, func)
+    func.__doc__ = str(expr)
     return func
 
 def applymethod(Arr, Method):
@@ -148,13 +149,13 @@ class unit_cell(object):
         self.G = sp.Matrix(self.miller)
         self.Gc = self.B * self.G
         
-        self.qfunc = makefunc(self.Gc.norm())
+        self.qfunc = makefunc(self.Gc.norm(), sp)
         
         self.metric_tensor, self.metric_tensor_inv = recparam[8:10] # metric tensors
         
         self.V = sp.sqrt(self.metric_tensor.det())
         self.energy = sp.Symbol("epsilon", real=True)
-        self.subs = dict([(s, s) for s in self.miller])
+        self.subs = dict([(s, s) for s in self.miller + (self.a, self.b, self.c)])
         self.elements = {}
         self.dE={}
         self.S = dict([(s.name, s) for s in self.miller]) # dictionary of all symbols
@@ -492,9 +493,8 @@ class unit_cell(object):
         """
         if miller==None:
             miller = tuple(self.G)
-        else:
-            self.subs.update(zip(self.G, miller))
-            self.miller = miller
+        self.subs.update(zip(self.G, miller))
+        self.miller = miller
         if not hasattr(self, "cell"):
             self.build_unit_cell()
         G = self.G.subs(self.subs)
@@ -572,7 +572,10 @@ class unit_cell(object):
         else: xi = sp.atan(Gc[2]/sp.sqrt(Gc[0]**2 + Gc[1]**2))
         
         if simplify:
-            xi, phi = xi.simplify(), phi.simplify()
+            if hasattr(xi, "simplify"):
+                xi = xi.simplify()
+            if hasattr(phi, "simplify"):
+                phi = phi.simplify()
         self.xi, self.phi = xi, phi
         #phi = sp.Symbol("phi")
         #xi = sp.Symbol("xi")
@@ -695,13 +698,12 @@ class unit_cell(object):
         if miller==None:
             miller = self.miller
         else:
-            self.calc_structure_factor(miller, DQ=DQ)
+            self.calc_structure_factor(miller, DD=DD, DQ=DQ)
             self.transform_structure_factor(AAS=(DQ+DD))
             self.f0 = {}
         if not np.all(energy == self.Etab):
             self.f1tab = {}
             self.f2tab = {}
-        self.qval = self.q.subs(self.subs)
         for label in self.AU_formfactors.iterkeys():
             ffsymbol = self.AU_formfactors[label]
             element = self.elements[label]
@@ -710,7 +712,7 @@ class unit_cell(object):
             
             if not self.f0.has_key(element):
                 print("Calculating nonresonant scattering amplitude for %s"%element)
-                self.f0[element] = calc_f0(element, self.qval)
+                self.f0[element] = calc_f0(element, self.q)
             
             if equivalent:
                 tmp = sp.Symbol("f_" + element)
