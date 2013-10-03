@@ -88,7 +88,7 @@ class unit_cell(object):
     """
     eps = 10*np.finfo(np.float64).eps
     u = 1.660538921e-27 # atomic mass unit
-    def __init__(self, structure, resonant=""):
+    def __init__(self, structure, resonant="", **kwargs):
         """
             Initializes the crystals unit cell for a given
             structure in the following steps:
@@ -164,7 +164,8 @@ class unit_cell(object):
         self.occupancy = {}
         
         if self.cif:
-            self.load_cif(structure, resonant)
+            
+            self.load_cif(structure, resonant, **kwargs)
     
     def add_atom(self, label, position, isotropic=True, assume_complex=False, dE=0, occupancy=1):
         """
@@ -243,7 +244,7 @@ class unit_cell(object):
             if DEBUG: print(self.AU_formfactorsDD[label], self.AU_formfactorsDQ[label])
         else: raise TypeError("Enter boolean argument for isotropic")
     
-    def load_cif(self, fname, resonant=""):
+    def load_cif(self, fname, resonant="", max_denominator=10000):
         """
             Loads a structure from a .cif file.
             See:
@@ -273,17 +274,17 @@ class unit_cell(object):
             elif line.startswith("_cell_angle_alpha"):
                 alpha = float(Line.split()[1].partition("(")[0]) #)
                 alpha /= 180
-                alpha = sp.S(Fraction("%.15f"%alpha).limit_denominator()) * sp.pi
+                alpha = sp.S(Fraction("%.15f"%alpha).limit_denominator(max_denominator)) * sp.pi
                 self.subs[self.alpha] = alpha
             elif line.startswith("_cell_angle_beta"):
                 beta = float(Line.split()[1].partition("(")[0]) #)
                 beta /= 180
-                beta = sp.S(Fraction("%.15f"%beta).limit_denominator()) * sp.pi
+                beta = sp.S(Fraction("%.15f"%beta).limit_denominator(max_denominator)) * sp.pi
                 self.subs[self.beta] = beta
             elif line.startswith("_cell_angle_gamma"):
                 gamma = float(Line.split()[1].partition("(")[0]) #)
                 gamma /= 180
-                gamma = sp.S(Fraction("%.15f"%gamma).limit_denominator()) * sp.pi
+                gamma = sp.S(Fraction("%.15f"%gamma).limit_denominator(max_denominator)) * sp.pi
                 self.subs[self.gamma] = gamma
             elif line.startswith("_atom_site"):
                 if line.startswith("_atom_site_label"): col_label = num_atom
@@ -299,9 +300,9 @@ class unit_cell(object):
                 symbol = atomline[col_symbol]
                 if symbol[:2].isalpha(): symbol = symbol[:2]
                 else: symbol = symbol[:1]
-                px = sp.S(Fraction(atomline[col_x].partition("(")[0]).limit_denominator(10000)) #)
-                py = sp.S(Fraction(atomline[col_y].partition("(")[0]).limit_denominator(10000)) #)
-                pz = sp.S(Fraction(atomline[col_z].partition("(")[0]).limit_denominator(10000)) #)
+                px = sp.S(Fraction(atomline[col_x].partition("(")[0]).limit_denominator(max_denominator)) #)
+                py = sp.S(Fraction(atomline[col_y].partition("(")[0]).limit_denominator(max_denominator)) #)
+                pz = sp.S(Fraction(atomline[col_z].partition("(")[0]).limit_denominator(max_denominator)) #)
                 position = (px, py, pz)
                 isotropic = (symbol not in resonant)
                 if DEBUG: print label, symbol, position, isotropic
