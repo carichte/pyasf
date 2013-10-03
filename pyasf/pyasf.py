@@ -140,7 +140,8 @@ class unit_cell(object):
         self.AU_formfactorsDQ = {} # only asymmetric unit, dipolar-quadrupolar interference
         self.generators=get_generators(sg) # fetch the space group generators
         
-        self.a, self.b, self.c, self.alpha, self.beta, self.gamma = get_cell_parameters(sg)
+        metrik = get_cell_parameters(sg)
+        self.a, self.b, self.c, self.alpha, self.beta, self.gamma = metrik
         recparam = get_rec_cell_parameters(self.a, self.b, self.c, self.alpha, self.beta, self.gamma)
         self.ar, self.br, self.cr = recparam[:3] # reciprocal lattice parameters
         self.alphar, self.betar, self.gammar = recparam[3:6] # reciprocal lattice angles
@@ -148,18 +149,22 @@ class unit_cell(object):
         self.miller = sp.symbols("h k l", integer=True)
         self.G = sp.Matrix(self.miller)
         self.Gc = self.B * self.G
-        
-        self.qfunc = makefunc(self.Gc.norm(), sp)
+        self.q = self.Gc.norm()
+        self.qfunc = makefunc(self.q, sp)
         
         self.metric_tensor, self.metric_tensor_inv = recparam[8:10] # metric tensors
         
         self.V = sp.sqrt(self.metric_tensor.det())
         self.energy = sp.Symbol("epsilon", real=True)
-        self.subs = dict([(s, s) for s in self.miller + (self.a, self.b, self.c)])
+        self.subs = {}
+        for s in self.miller + metrik:
+            if s.is_Symbol:
+                self.subs[s] = s
         self.elements = {}
         self.dE={}
         self.S = dict([(s.name, s) for s in self.miller]) # dictionary of all symbols
         self.f0func = {}
+        self.f0 = {}
         self.Etab = np.array([])
         self.occupancy = {}
         
@@ -202,14 +207,16 @@ class unit_cell(object):
         if len(label) > 1:
             labeltest += label[1].lower()
         if labeltest in deltaf.elements.Z.keys():
-            self.elements[label] = labeltest
+            element = labeltest
         elif labeltest[:1] in deltaf.elements.Z.keys():
-            self.elements[label] = labeltest[:1]
+            element = labeltest[:1]
         else:
             raise ValueError("Atom label should start with the symbol of the chemical element" + \
                              "Chemical element not found in %s"%label)
+        self.elements[label] = element
         self.AU_positions[label] = np.array(position)
         self.dE[label] = dE
+        self.f0func[element] = makefunc(calc_f0(element, self.Gc.norm()), sp)
         self.occupancy[label] = occupancy
         if assume_complex:
             my_ff_args = dict({"real":False, "imag":False, "commutative":True, "complex":True, "bounded":True, "unbounded":False})
@@ -325,7 +332,7 @@ class unit_cell(object):
                 element_pos[element].append(self.AU_positions[label])
             else:
                 element_pos[element] = [self.AU_positions[label]]
-        print element_pos
+        if DEBUG: print element_pos
         while start_sg>0:
             print("Trying space group %i..."%start_sg)
             UCtest = unit_cell(start_sg)
@@ -701,7 +708,7 @@ class unit_cell(object):
         else:
             self.calc_structure_factor(miller, DD=DD, DQ=DQ)
             self.transform_structure_factor(AAS=(DQ+DD))
-            self.f0 = {}
+            self.f0.clear()
         if not np.all(energy == self.Etab):
             self.f1tab = {}
             self.f2tab = {}
@@ -712,8 +719,8 @@ class unit_cell(object):
             Z = deltaf.elements.Z[element]
             
             if not self.f0.has_key(element):
-                print("Calculating nonresonant scattering amplitude for %s"%element)
-                self.f0[element] = calc_f0(element, self.q)
+                if DEBUG: print("Calculating nonresonant scattering amplitude for %s"%element)
+                self.f0[element] = self.f0func[element].dictcall(self.subs)
             
             if equivalent:
                 tmp = sp.Symbol("f_" + element)
@@ -791,8 +798,8 @@ class unit_cell(object):
             ffsymbol = self.AU_formfactors[label]
             element = self.elements[label]
             Z = deltaf.elements.Z[element]
-            f0 = calc_f0(element, self.q.subs(self.subs))
-            if str(ffsymbol).endswith("_0"):
+            f0 = self.f0func[element].dictcall(self.subs)
+            if ffsymbol.name.endswith("_0"):
                 self.subs[ffsymbol] = f0
             else:
                 dE = self.dE[label] # edge shift in eV
@@ -813,8 +820,7 @@ class unit_cell(object):
             self.AAS[pol] = channel
             Intensity = abs(channel)**2
             Intensity = Intensity.expand()
-            symbols = sorted(filter(lambda x: x.is_Symbol, channel.atoms()))
-            self.I[pol] = lambdify(map(str, symbols), channel * channel.conjugate(), ("numpy", mydict))
+            self.I[pol] = makefunc(Intensity, "numpy")
         
 
     def get_F0(self, miller, energy=None, resonant=True, table="Sasaki", equivalent=False):
@@ -836,7 +842,6 @@ class unit_cell(object):
         self.calc_structure_factor((h,k,l))
         self.transform_structure_factor(AAS=False)
         
-        q = self.q.subs(self.subs)
         done = []
         for label in self.AU_formfactors.iterkeys():
             ffsymbol = self.AU_formfactors[label]
@@ -850,10 +855,10 @@ class unit_cell(object):
                 continue
             
             
-            print("Calculating nonresonant f_0 for %s..." %ffsymbol.name),
+            if DEBUG:
+                print("Calculating nonresonant f_0 for %s..." %ffsymbol.name)
             Z = deltaf.elements.Z[element]
-            f0 = calc_f0(element, q)#.n()
-            print("Done")
+            f0 = self.f0func[element].dictcall(self.subs)
 
             if ffsymbol.name.endswith("_0"):
                 self.subs[ffsymbol] = f0
