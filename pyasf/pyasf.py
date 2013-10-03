@@ -582,7 +582,6 @@ class unit_cell(object):
         # combined rotation
         self.Q = np.dot(self.Xi, self.Phi)
         if simplify:
-            t0 = time()
             applymethod(self.Q, "simplify")
             if AAS:
                 self.Fc_DD = ArraySimp1(self.Fc_DD)
@@ -681,7 +680,6 @@ class unit_cell(object):
             If ``func_output`` is True, a function for the structure amplitude
             F(E) is returned. Otherwise, it's the Intensity array.
         """
-        #print 0,time()
         self.f = dict({})
         if f1==None:
             f1=dict({})

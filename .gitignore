@@ -1,6 +1,7 @@
 *.[oa]
 *.so
 *.zip
+*.pyc
 *.tar.gz
 *.tar
 *.tgz
