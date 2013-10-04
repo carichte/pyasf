@@ -568,6 +568,7 @@ class unit_cell(object):
         if AAS:
             self.Fc_DD = full_transform(B_0_inv_T, self.F_DD)
             self.Fc_DQ = full_transform(B_0_inv_T, self.F_DQ)
+        
         # and now: the rotation into the diffractometer system (means rotation G into xd-direction)
         # calculate corresponding angles
         Gc = self.Gc.subs(self.subs)
@@ -585,8 +586,7 @@ class unit_cell(object):
             if hasattr(phi, "simplify"):
                 phi = phi.simplify()
         self.xi, self.phi = xi, phi
-        #phi = sp.Symbol("phi")
-        #xi = sp.Symbol("xi")
+        
         # introduce rotational matrices
         self.Phi = np.array([[sp.cos(phi), sp.sin(phi), 0], [-sp.sin(phi), sp.cos(phi), 0], [0,0,1]]) #Drehung um z in -phi Richtung
         self.Xi = np.array([[sp.cos(xi), 0, sp.sin(xi)], [0,1,0], [-sp.sin(xi), 0, sp.cos(xi)]]) #Drehung um y in xi Richtung
@@ -606,16 +606,20 @@ class unit_cell(object):
         
     
     def theta_degree(self, energy=None):
+        """
+            Returns the Bragg angle (theta) in degree for a given energy in eV.
+        """
         if energy!=None:
             self.subs[self.energy] = energy
         return sp.N(self.theta.subs(self.subs) * 180/sp.pi)
     
     def calc_scattered_amplitude(self, miller=None, psi=None, assume_imag=True, DD=True, DQ=True):
-        if miller==None: miller = self.miller
-        else: 
+        if miller==None:
+            miller = self.miller
+        else:
             self.calc_structure_factor(miller, DQ=DQ)
         if psi==None:
-            psi = sp.Symbol("psi", real=True, imag=False, commutative=True, bounded=True, unbounded=False)
+            psi = sp.Symbol("psi", real=True)
             self.S[psi.name] = psi
         self.transform_structure_factor()
         sigma = sp.Matrix([0,0,1])
