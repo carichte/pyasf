@@ -8,7 +8,7 @@ if len(sys.argv)<2:
 
 setup( name = "pyasf", 
        version = "0.1",
-       packages = ["pyasf"],
+       packages = ["pyasf", "deltaf"],
        package_data={'pyasf': ['space-groups.sqlite']},
        author = "Carsten Richter", 
        author_email = "carsten.richter@desy.de",
