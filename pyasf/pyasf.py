@@ -607,7 +607,7 @@ class unit_cell(object):
         self.Gd = sp.Matrix(self.Q) * Gc
         
     
-    def theta_degree(self, energy=None):
+    def theta_degrees(self, energy=None):
         """
             Returns the Bragg angle (theta) in degree for a given energy in eV.
         """
