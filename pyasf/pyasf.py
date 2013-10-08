@@ -149,6 +149,7 @@ class unit_cell(object):
         self.miller = sp.symbols("h k l", integer=True)
         self.G = sp.Matrix(self.miller)
         self.Gc = self.B * self.G
+        self.Gc.simplify()
         self.q = self.Gc.norm()
         self.qfunc = makefunc(self.q, sp)
         
@@ -216,7 +217,8 @@ class unit_cell(object):
         self.elements[label] = element
         self.AU_positions[label] = np.array(position)
         self.dE[label] = dE
-        self.f0func[element] = makefunc(calc_f0(element, self.Gc.norm()), sp)
+        if not self.f0func.has_key(element):
+            self.f0func[element] = makefunc(calc_f0(element, self.Gc.norm()), sp)
         self.occupancy[label] = occupancy
         if assume_complex:
             my_ff_args = dict({"real":False, "imag":False, "commutative":True, "complex":True, "bounded":True, "unbounded":False})
