@@ -827,22 +827,14 @@ class unit_cell(object):
             self.I[pol] = makefunc(Intensity, "numpy")
         
 
-    def get_F0(self, miller, energy=None, resonant=True, table="Sasaki", equivalent=False):
+    def get_F0(self, miller=None, energy=None, resonant=True, table="Sasaki", equivalent=False):
+        if miller==None:
+            miller = self.miller
         if energy!=None:
             self.subs[self.energy] = energy
         else:
             energy = float(self.subs[self.energy])
         h, k, l = miller
-        if h==None:
-            h = sp.Symbol("h", integer=True)
-            self.S[h.name] = h
-        if k==None:
-            k = sp.Symbol("k", integer=True)
-            self.S[k.name] = k
-        if l==None:
-            l = sp.Symbol("l", integer=True)
-            self.S[l.name] = l
-        #print h,k,l
         self.calc_structure_factor((h,k,l))
         self.transform_structure_factor(AAS=False)
         
