@@ -19,10 +19,8 @@ from scipy.interpolate import interp1d
 from sympy.utilities import lambdify
 import deltaf
 import types
-
+import itertools
 #mydict = dict({"Abs":abs})
-DEBUG=False
-#DEBUG=True
 #epsilon=1.e-10
 
 """
@@ -43,10 +41,10 @@ def makefunc(expr, mathmodule = "numpy"):
     func.__doc__ = str(expr)
     return func
 
-def applymethod(Arr, Method):
+def applymethod(Arr, Method, *args):
     for ele in np.nditer(Arr, flags=["refs_ok"], op_flags=['readwrite']):
         if hasattr(ele.item(), Method):
-            ele[...] = getattr(ele.item(), Method)()
+            ele[...] = getattr(ele.item(), Method)(*args)
 
 def applyfunc(Arr, Func):
     for ele in np.nditer(Arr, flags=["refs_ok"], op_flags=['readwrite']):
@@ -88,6 +86,7 @@ class unit_cell(object):
     """
     eps = 10*np.finfo(np.float64).eps
     u = 1.660538921e-27 # atomic mass unit
+    DEBUG = False
     def __init__(self, structure, resonant="", **kwargs):
         """
             Initializes the crystals unit cell for a given
@@ -134,10 +133,11 @@ class unit_cell(object):
             raise IOError("Invalid input for structure. Has to be either space group number or path to .cif-file")
             
         self.AU_positions = {} # only asymmetric unit
-        self.symmetries = {}
         self.AU_formfactors = {} # only asymmetric unit, isotropic
         self.AU_formfactorsDD = {} # only asymmetric unit, pure dipolar
         self.AU_formfactorsDQ = {} # only asymmetric unit, dipolar-quadrupolar interference
+        self.symmetries = {}
+        self.sg = sg
         self.generators=get_generators(sg) # fetch the space group generators
         
         metrik = get_cell_parameters(sg)
@@ -221,36 +221,38 @@ class unit_cell(object):
             self.f0func[element] = makefunc(calc_f0(element, self.Gc.norm()), sp)
         self.occupancy[label] = occupancy
         if assume_complex:
-            my_ff_args = dict({"real":False, "imag":False, "commutative":True, "complex":True, "bounded":True, "unbounded":False})
+            my_ff_args = dict({"complex":True})
         else:
-            my_ff_args = dict({"real":True, "imag":False, "commutative":True, "complex":True, "bounded":True, "unbounded":False})
+            my_ff_args = dict({"real":True})
         if isotropic:
             Sym = sp.Symbol("f_" + label, **my_ff_args)
             self.S[Sym.name] = Sym
             self.AU_formfactors[label] = Sym
         elif not isotropic:
-            Sym = sp.Symbol("f_" + label + "_0", real=True, imag=False, commutative=True, complex=True, bounded=True, unbounded=False)
+            Sym = sp.Symbol("f_" + label + "_0", real=True)
             self.S[Sym.name] = Sym
             self.AU_formfactors[label] = Sym
             self.AU_formfactorsDD[label] = np.zeros((3,3), dtype=object)
-            for i in (0,1,2):
-                for j in (0,1,2):
-                    if i<=j: 
-                        Sym = sp.Symbol("f_" + label + "_dd_" + str(i+1) + str(j+1), **my_ff_args)
-                        self.S[Sym.name] = Sym
-                        self.AU_formfactorsDD[label][i,j] = Sym
-                        if i<j: self.AU_formfactorsDD[label][j,i] = Sym
+            ind = range(3)
+            for i,j in itertools.product(ind, ind):
+                if i<=j: 
+                    Sym = sp.Symbol("f_%s_dd_%i%i"%(label, i+1, j+1), **my_ff_args)
+                    self.S[Sym.name] = Sym
+                    self.AU_formfactorsDD[label][i,j] = Sym
+                    if i<j:
+                        self.AU_formfactorsDD[label][j,i] = Sym
             self.AU_formfactorsDQ[label] = np.zeros((3,3,3), dtype=object)
             kindices=("x", "y", "z")
-            for h in (0,1,2):
-                for i in (0,1,2):
-                    for j in (0,1,2):
-                        if j<=h:
-                            Sym = sp.Symbol("f_" + label + "_dq_" + kindices[h] + str(i+1) + str(j+1), **my_ff_args)
-                            self.S[Sym.name] = Sym
-                            self.AU_formfactorsDQ[label][h,i,j] = Sym
-                            if j<h: self.AU_formfactorsDQ[label][j,i,h] = Sym # See eq. 12 in Kokubun et al. http://dx.doi.org/10.1103/PhysRevB.82.205206
-            if DEBUG: print(self.AU_formfactorsDD[label], self.AU_formfactorsDQ[label])
+            for h,i,j in itertools.product(ind, ind, ind):
+                if j<=h:
+                    Sym = sp.Symbol("f_%s_dq_%s%i%i"%(label, kindices[h], i+1, j+1), **my_ff_args)
+                    self.S[Sym.name] = Sym
+                    self.AU_formfactorsDQ[label][h,i,j] = Sym
+                    if j<h:
+                        self.AU_formfactorsDQ[label][j,i,h] = Sym 
+                        # See eq. 12 in Kokubun et al. http://dx.doi.org/10.1103/PhysRevB.82.205206
+            if self.DEBUG:
+                print(self.AU_formfactorsDD[label], self.AU_formfactorsDQ[label])
         else: raise TypeError("Enter boolean argument for isotropic")
     
     def load_cif(self, fname, resonant="", max_denominator=10000):
@@ -273,7 +275,7 @@ class unit_cell(object):
             Line = lines.pop()
             Line = Line.replace("\t", " ")
             line = Line.lower()
-            #if DEBUG: print line
+            #if self.DEBUG: print line
             if line.startswith("_cell_length_a"):
                 self.subs[self.a] = float(Line.split()[1].partition("(")[0]) #)
             elif line.startswith("_cell_length_b"):
@@ -314,7 +316,8 @@ class unit_cell(object):
                 pz = sp.S(Fraction(atomline[col_z].partition("(")[0]).limit_denominator(max_denominator)) #)
                 position = (px, py, pz)
                 isotropic = (symbol not in resonant)
-                if DEBUG: print label, symbol, position, isotropic
+                if self.DEBUG:
+                    print label, symbol, position, isotropic
                 self.add_atom(label, position, isotropic, assume_complex=True)
         
         
@@ -334,7 +337,8 @@ class unit_cell(object):
                 element_pos[element].append(self.AU_positions[label])
             else:
                 element_pos[element] = [self.AU_positions[label]]
-        if DEBUG: print element_pos
+        if self.DEBUG:
+            print element_pos
         while start_sg>0:
             print("Trying space group %i..."%start_sg)
             UCtest = unit_cell(start_sg)
@@ -348,7 +352,8 @@ class unit_cell(object):
                     for newpos in UCtest.positions[element+str(num)]:
                         ind = (((newpos - np.array(positions))**2).sum(1))<UCtest.mindist
                         if sum(ind)==1:
-                            if DEBUG: print "Found", newpos, "in", positions
+                            if self.DEBUG:
+                                print "Found", newpos, "in", positions
                             positions = positions[~ind]
                         else:
                             print "Not found", newpos
@@ -362,37 +367,47 @@ class unit_cell(object):
                 break
         return UCtest
     
-    def get_tensor_symmetry(self, names = None):
+    def get_tensor_symmetry(self, labels = None):
         """
             Applies Site Symmetries of the Space Group to the Scattering Tensors.
         """
-        if names == None: names = self.AU_formfactorsDD.keys()
+        if labels == None:
+            labels = self.AU_formfactorsDD.keys()
         self.equations={}
-        for name in names:
-            self.equations[name]=[]
+        for label in labels:
+            equations=[]
             for generator in self.generators:
                 W = np.array(generator[:,:3])
                 w = np.array(generator[:,3]).ravel()
-                if DEBUG: print w, W
-                new_position = full_transform(W, self.AU_positions[name]) + w
-                if DEBUG: print new_position
+                if self.DEBUG: print w, W
+                new_position = full_transform(W, self.AU_positions[label]) + w
+                if self.DEBUG: print new_position
                 new_position = np.array([stay_in_UC(i) for i in new_position])
-                #if (new_position == self.AU_positions[name]).all(): #1.8.13
-                if (new_position - self.AU_positions[name]).sum() < self.eps:
-                    new_formfactorDD = full_transform(W, self.AU_formfactorsDD[name])
-                    new_formfactorDQ = full_transform(W, self.AU_formfactorsDQ[name])
-                    for i in (self.AU_formfactorsDD[name] - new_formfactorDD).ravel(): self.equations[name].append(i)
-                    for i in (self.AU_formfactorsDQ[name] - new_formfactorDQ).ravel(): self.equations[name].append(i)
-            if DEBUG: print self.equations
-            symmetries=sp.solve(list(np.unique(self.equations[name])))
-            self.symmetries[name]=symmetries
-            if DEBUG: print symmetries
-            for i in range(3):
-                for j in range(3):
-                    if self.AU_formfactorsDD[name][i,j] in symmetries.keys(): self.AU_formfactorsDD[name][i,j] = symmetries[self.AU_formfactorsDD[name][i,j]]
-                    for h in range(3):
-                        if self.AU_formfactorsDQ[name][h,i,j] in symmetries.keys(): self.AU_formfactorsDQ[name][h,i,j] = symmetries[self.AU_formfactorsDQ[name][h,i,j]]
-            if DEBUG: print self.AU_formfactorsDD[name], self.AU_formfactorsDQ[name]
+                #if (new_position == self.AU_positions[label]).all(): #1.8.13
+                if (new_position - self.AU_positions[label]).sum() < self.eps:
+                    new_formfactorDD = full_transform(W, self.AU_formfactorsDD[label])
+                    new_formfactorDQ = full_transform(W, self.AU_formfactorsDQ[label])
+                    for eq in (self.AU_formfactorsDD[label] - new_formfactorDD).ravel():
+                        if eq not in equations and hasattr(eq, "is_number") and not eq.is_number:
+                            equations.append(eq)
+                    for eq in (self.AU_formfactorsDQ[label] - new_formfactorDQ).ravel():
+                        if eq not in equations and hasattr(eq, "is_number") and not eq.is_number:
+                            equations.append(eq)
+            if self.DEBUG:
+                print label, equations
+            self.equations[label] = equations
+            symmetries=sp.solve(equations, dict=True)
+            if not symmetries:
+                continue
+            assert len(symmetries)==1, "Unusual length of result of sp.solve (>1)"
+            symmetries = symmetries[0]
+            self.symmetries[label]=symmetries
+            if self.DEBUG:
+                print symmetries
+            applymethod(self.AU_formfactorsDD[label], "subs", symmetries)
+            applymethod(self.AU_formfactorsDQ[label], "subs", symmetries)
+            if self.DEBUG:
+                print self.AU_formfactorsDD[label], self.AU_formfactorsDQ[label]
     
     
     def transform(self, generator, AU=False):
@@ -478,6 +493,7 @@ class unit_cell(object):
                         self.formfactorsDQ[name].append(full_transform(W, self.AU_formfactorsDQ[name]))
                         self.cell.append((new_position, self.formfactorsDQ[name][-1]))
                     self.positions[name].append(new_position)
+        # rough estimate of the infimum of the distance of atoms:
         self.mindist = 1./len(self.cell)**(1./3)/1000.
     
     
@@ -517,7 +533,7 @@ class unit_cell(object):
                     r = self.positions[Atom][i]
                     f = self.formfactors[Atom][i]
                     o = self.occupancy[Atom]
-                    if DEBUG: print r, G.dot(r)
+                    if self.DEBUG: print r, G.dot(r)
                     self.F_0 += o * f * sp.exp(2*sp.pi*sp.I * G.dot(r))
             if self.formfactorsDD.has_key(Atom) and DD:
                 for i in range(len(self.formfactorsDD[Atom])):
@@ -640,7 +656,7 @@ class unit_cell(object):
         if DQ:
             self.Fd_psi_DQ = full_transform(Psi, self.Fd_DQ)
         self.Gd_psi = sp.Matrix(Psi) * self.Gd
-        if DEBUG:
+        if self.DEBUG:
             print self.Gd, self.Gd_psi
         
         # calculate symmetric and antisymmetric DQ Tensors
@@ -725,7 +741,7 @@ class unit_cell(object):
             Z = deltaf.elements.Z[element]
             
             if not self.f0.has_key(element):
-                if DEBUG: print("Calculating nonresonant scattering amplitude for %s"%element)
+                if self.DEBUG: print("Calculating nonresonant scattering amplitude for %s"%element)
                 self.f0[element] = self.f0func[element].dictcall(self.subs)
             
             if equivalent:
@@ -853,7 +869,7 @@ class unit_cell(object):
                 continue
             
             
-            if DEBUG:
+            if self.DEBUG:
                 print("Calculating nonresonant f_0 for %s..." %ffsymbol.name)
             Z = deltaf.elements.Z[element]
             f0 = self.f0func[element].dictcall(self.subs)
@@ -877,11 +893,12 @@ class unit_cell(object):
     def calc_multitple_reflections(self, miller, energy = None, **kwargs):
         if energy!=None:
             self.subs[self.energy] = energy
-        miller2 = sp.symbols("h2,k2,l2", integer=True)
-        for sym in miller2:
-            if kwargs.has_key(sym.name):
-                self.subs[sym] = kwargs[sym.name]
-            self.S[sym.name] = sym
+        miller2 = list(sp.symbols("h2,k2,l2", integer=True))
+        for i in range(3):
+            if kwargs.has_key(miller2[i].name):
+                miller2[i] = kwargs[miller2[i].name]
+            else:
+                self.S[miller2[i].name] = miller2[i]
         
         psi2 = sp.Symbol("psi_2", real=True)
         self.S[psi2.name] = psi2
