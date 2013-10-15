@@ -36,8 +36,7 @@ def get_generators(sg):
     result=result.read()
     while "<pre>" in result:
         smth=result.partition("<pre>")[2].partition("</pre>")
-        generator=map(sp.S, smth[0].split())
-        print generator
+        generator = map(sp.S, smth[0].split())
         generators.append(sp.Matrix(generator).reshape(3,4))
         result=smth[2]
     dbi=sqlite3.connect(DBPATH)

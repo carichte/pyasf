@@ -573,6 +573,9 @@ class unit_cell(object):
         """
             First transforms F to a real space, cartesian, crystal-fixed system ->Fc.
             Then transforms Fc to the diffractometer system, which is G along xd and sigma along zd ->Fd.
+            
+            This happence according to the work reported in:
+            Acta Cryst. (1991). A47, 180-195 [doi:10.1107/S010876739001159X]
         """
         if not (hasattr(self, "F_0") and hasattr(self, "F_DD") and hasattr(self, "F_DQ")):
             self.calc_structure_factor(self.miller)
@@ -623,15 +626,18 @@ class unit_cell(object):
         self.Gd = sp.Matrix(self.Q) * Gc
         
     
-    def theta_degrees(self, energy=None):
+    def theta_degrees(self, energy=None, h=None, k=None, l=None):
         """
             Returns the Bragg angle (theta) in degree for a given energy in eV.
         """
         if energy!=None:
             self.subs[self.energy] = energy
-        return sp.N(self.theta.subs(self.subs) * 180/sp.pi)
+        subs = zip(self.G, (h,k,l))
+        subs = filter(lambda x: x[1]!=None, subs)
+        subs = dict(subs)
+        return sp.N(self.theta.subs(self.subs).subs(subs) * 180/sp.pi)
     
-    def calc_scattered_amplitude(self, miller=None, psi=None, assume_imag=True, DD=True, DQ=True):
+    def calc_scattered_amplitude(self, miller=None, psi=None, assume_imag=True, DD=True, DQ=True, simplify=True):
         if miller==None:
             miller = self.miller
         else:
@@ -650,11 +656,15 @@ class unit_cell(object):
         
         # introduce rotational matrix
         Psi = np.array([[1, 0, 0], [0,sp.cos(psi),sp.sin(psi)], [0, -sp.sin(psi), sp.cos(psi)]])
-        self.Fd_psi_0 = self.Fd_0
+        self.Fd_psi_0 = self.Fd_0.simplify()
         if DD:
             self.Fd_psi_DD = full_transform(Psi, self.Fd_DD)
+            if simplify:
+                applymethod(self.Fd_psi_DD, "simplify")
         if DQ:
             self.Fd_psi_DQ = full_transform(Psi, self.Fd_DQ)
+            if simplify:
+                applymethod(self.Fd_psi_DQ, "simplify")
         self.Gd_psi = sp.Matrix(Psi) * self.Gd
         if self.DEBUG:
             print self.Gd, self.Gd_psi
@@ -681,6 +691,8 @@ class unit_cell(object):
         #                         + sp.I*np.tensordot(self.Fd_psi_DQ.transpose(0,2,1).conjugate(), vec_k_s, axes=(0,0)) )
         
         self.Fd = sp.Matrix(self.Fd)
+        if simplify:
+            self.Fd.simplify()
         #self.Fd_alt = sp.Matrix(sp.expand(self.Fd_alt))
         
         
@@ -890,54 +902,86 @@ class unit_cell(object):
         return self.F_0.subs(self.subs).subs(self.subs)
         
 
-    def calc_multitple_reflections(self, miller, energy = None, **kwargs):
-        if energy!=None:
+    def calc_reflection_angles(self, orientation, energy = None, **kwargs):
+        """
+            Calculates the angles of Bragg reflections relative to the surface
+            of a crystal for given orientation (cut).
+            Returns a (theta, psi)-tuple, where theta is the angle between the
+            incident beam and the surface and psi is the azimuthal position.
+        """
+        if energy==None:
+            if self.subs.has_key(self.energy):
+                self.subs.pop(self.energy)
+        else:
             self.subs[self.energy] = energy
-        miller2 = list(sp.symbols("h2,k2,l2", integer=True))
+        miller = list(sp.symbols("h,k,l", integer=True))
         for i in range(3):
-            if kwargs.has_key(miller2[i].name):
-                miller2[i] = kwargs[miller2[i].name]
-            else:
-                self.S[miller2[i].name] = miller2[i]
+            if kwargs.has_key(miller[i].name):
+                miller[i] = kwargs[miller[i].name]
         
         psi2 = sp.Symbol("psi_2", real=True)
         self.S[psi2.name] = psi2
         
-        self.calc_structure_factor(miller)
+        self.calc_structure_factor(orientation)
         self.transform_structure_factor(AAS=False)
         Q = sp.Matrix(self.Q)
-        Gc = self.Gc.subs(self.subs)
-        sintheta = sp.sin(self.theta)
-        costheta = sp.sqrt(1 - sintheta**2)
-        vec_ki_d = sp.Matrix([-sintheta, costheta, 0])
+        Gc = self.Gc.subs(self.subs).normalized()
+        #sintheta = sp.sin(self.theta)
+        #costheta = sp.sqrt(1 - sintheta**2)
+        #vec_ki_d = sp.Matrix([-sintheta, costheta, 0])
         #self.vec_ki_d = vec_ki_d
-        ref_d = vec_ki_d.cross(self.Gd).T  # Reference vector for psi=0
-        #ref_d = sp.Matrix([0,0,1]) # Reference vector for psi=0
-        #self.ref_d = ref_d
-        ref_c = (Q.T * ref_d).applyfunc(sp.simplify)
-        #self.ref_c = ref_c
-        #print Q.T*ref_d
-        self.calc_structure_factor(miller2) # secondary reflection
+        #ref_d = vec_ki_d.cross(self.Gd).T  # Reference vector for psi=0
+        ref_d = sp.Matrix([0,0,1]) # Reference vector for psi=0
+        ref_c = Q.T * ref_d
+        ref_c.simplify()
+        self.calc_structure_factor(miller) # secondary reflection
         self.transform_structure_factor(AAS=False)
-        Q2 = sp.Matrix(self.Q).applyfunc(sp.simplify)
+        Q2 = sp.Matrix(self.Q)
+        Q2.simplify()
         sintheta2 = sp.sin(self.theta)
         costheta2 = sp.sqrt(1 - sintheta2**2)
         vec_ki2_d = sp.Matrix([-sintheta2, costheta2, 0])
-        ref2_d = Q2 * ref_c
+        ref_d2 = Q2 * ref_c
         Gd = Q2 * Gc
-        Psi2 = sp.Matrix([[1, 0, 0], [0,sp.cos(psi2),sp.sin(psi2)], [0, -sp.sin(psi2), sp.cos(psi2)]])
-        ref2_d_psi = Psi2 * ref2_d
-        #self.ref2_d_psi = ref2_d_psi
+        Psi2 = sp.Matrix([[1,             0,           0],
+                          [0,  sp.cos(psi2), sp.sin(psi2)],
+                          [0, -sp.sin(psi2), sp.cos(psi2)]])
+        ref_d2_psi = Psi2 * ref_d2
         Gd_psi = Psi2 * Gd
+        self.Gd_psi = Gd_psi
         newref = vec_ki2_d.cross(Gd_psi) # new mark
-        #self.newref = newref
-        cospsi = newref.dot(ref2_d_psi)/(newref.norm()*ref2_d_psi.norm())
-        #cospsi = newref.dot(ref2_d_psi)/sp.sqrt(newref.dot(newref)*ref2_d_psi.dot(ref2_d_psi))
+        #psi is the angle between ref_d2_psi and newref
+        cospsi = newref.dot(ref_d2_psi)/(newref.norm()*ref_d2_psi.norm())
         sintheta = vec_ki2_d.dot(Gd_psi)/(vec_ki2_d.norm()*Gd_psi.norm())
-        #print cospsi
-        #return sp.asin(sintheta), sp.acos(cospsi)
         return sp.asin(sintheta), sp.acos(cospsi)
         
     
-
+    def get_reflection_angles(self, orientation, energy=None):
+        """
+            For a given surface orientation, this method returns a function
+            that, in turn, returns the (psi, theta) tuple of a given reflection
+            and at a given energy.
+        """
+        if energy==None:
+            if self.subs.has_key(self.energy):
+                self.subs.pop(self.energy)
+        else:
+            self.subs[self.energy] = energy
+        coordfunc = {}
+        for miller in itertools.product([0,"h"], [0,"k"], [0,"l"]):
+            key = "".join(map(str, miller))
+            smth = zip(("h", "k", "l"), miller)
+            kwargs = dict(filter(lambda x:x[1]==0, smth))
+            kwvar = tuple(sorted(dict(filter(lambda x:x[1]!=0, smth)).keys()))
+            theta, psi = self.calc_reflection_angles(orientation, **kwargs)
+            print key
+            coordfunc[key]  = lambdify(("psi_2", "epsilon") + kwvar, [psi.subs(self.subs), theta.subs(self.subs)], "numpy")
+        def coordinates(miller, energy, psi2):
+            key = zip(("h", "k", "l"), miller)
+            kwargs = dict(filter(lambda x:x[1]!=0, key))
+            key = map(lambda x: x[0] if x[1]!= 0 else "0", key)
+            key = "".join(key)
+            return coordfunc[key](psi2, energy, **kwargs)
+        
+        return coordinates
 
