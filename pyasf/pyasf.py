@@ -173,7 +173,7 @@ class unit_cell(object):
             
             self.load_cif(structure, resonant, **kwargs)
     
-    def add_atom(self, label, position, isotropic=True, assume_complex=False, dE=0, occupancy=1):
+    def add_atom(self, label, position, isotropic=True, assume_complex=True, dE=0, occupancy=1):
         """
             Method to fill the asymmetric unit with atoms.
             
@@ -271,12 +271,16 @@ class unit_cell(object):
         fobject.close()
         lines.reverse()
         num_atom = 0
+        self.cifinfo = {}
         while lines:
             Line = lines.pop()
             Line = Line.replace("\t", " ")
             line = Line.lower()
             #if self.DEBUG: print line
-            if line.startswith("_cell_length_a"):
+            if line.startswith("_chemical_formula_sum"):
+                sumformula = line.partition(" ")[2].strip("'").strip()
+                self.cifinfo["SumFormula"] = sumformula
+            elif line.startswith("_cell_length_a"):
                 self.subs[self.a] = float(Line.split()[1].partition("(")[0]) #)
             elif line.startswith("_cell_length_b"):
                 self.subs[self.b] = float(Line.split()[1].partition("(")[0]) #)
@@ -504,12 +508,19 @@ class unit_cell(object):
         assert hasattr(self, "positions"), \
             "Unable to find atom positions. Did you forget to perform the unit_cell.build_unit_cell() method?"
         self.species = np.unique(self.elements.values())
-        self.weights = {}
+        self.amounts = dict(zip(self.species, np.zeros(len(self.species), dtype=int)))
+        for label in self.positions.iterkeys():
+            self.amounts[self.elements[label]] += len(self.positions[label])
         
-        for atom in self.species:
-            self.weights[atom] = pf.get_element(atom)[1]
         
-        self.total_weight = sum([self.weights[atom] for atom in self.elements.values()])
+        self.weights = dict([(atom, pf.get_element(atom)[1]) for atom in self.species])
+        div = gcd(*self.amounts.values())
+        components = ["%s%i"%(item[0], item[1]/div) for item in self.amounts.iteritems()]
+        components = map(lambda x: x[:-1] if (x[-1]=="1" and not x[-2].isdigit()) else x, components)
+        self.SumFormula = "".join(components)
+        
+        
+        self.total_weight = sum([self.weights[atom]*self.amounts[atom] for atom in self.species])
         self.density = self.u * self.total_weight/1000. / (self.V*1e-10**3) # density in g/cm^3
         return float(self.density.subs(self.subs).n())
     

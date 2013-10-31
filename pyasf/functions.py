@@ -47,6 +47,25 @@ def get_generators(sg):
     return generators
     
 
+def gcd(*args):
+    if len(args) == 1:
+        return args[0]
+    
+    L = list(args)
+    
+    while len(L) > 1:
+        a = L[len(L) - 2]
+        b = L[len(L) - 1]
+        L = L[:len(L) - 2]
+        
+        while a:
+            a, b = b%a, a
+        
+        L.append(b)
+    
+    return abs(b)
+
+
 def stay_in_UC(coordinate):
     if [i.is_Symbol for i in coordinate.atoms()].count(True) > 0: return coordinate
     else: return coordinate%1
