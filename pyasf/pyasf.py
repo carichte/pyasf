@@ -33,7 +33,8 @@ dictcall = lambda self, d: self.__call__(*[d[k] for k in self.kw])
 
 
 def makefunc(expr, mathmodule = "numpy"):
-    symbols = sorted(filter(lambda x: x.is_Symbol, expr.atoms()))
+    symbols = filter(lambda x: x.is_Symbol, expr.atoms())
+    symbols.sort(key=str)
     func = lambdify(symbols, expr, mathmodule)
     func.kw = symbols
     func.kwstr = map(lambda x: x.name, symbols)
@@ -52,11 +53,11 @@ def applyfunc(Arr, Func):
 
 ArraySimp1 = np.vectorize(
     lambda ele:ele.expand(trig=True).rewrite(sp.sin, sp.exp).expand() if hasattr(ele, "expand") else ele,
-    doc="Vectorized function to simplify array elements")
+    doc="Vectorized function to simplify symbolic array elements using rewrite")
 
 ArraySimp2 = np.vectorize(
     lambda ele:ele.rewrite(sp.exp, sp.sin).expand() if hasattr(ele, "rewrite") else ele,
-    doc="Vectorized function to simplify array elements")
+    doc="Vectorized function to simplify symbolic array elements using rewrite")
 
 
 class unit_cell(object):
@@ -309,7 +310,7 @@ class unit_cell(object):
                 elif line.startswith("_atom_site_fract_z"): col_z = num_atom
                 elif line.startswith("_atom_site_occupancy"): col_occ = num_atom
                 num_atom+=1
-            elif num_atom>0 and len(Line.split())==num_atom:
+            elif num_atom>0 and len(Line.split())==num_atom and not line.startswith("#"):
                 atomline = Line.split()
                 label = atomline[col_label]
                 symbol = atomline[col_symbol]
@@ -588,7 +589,9 @@ class unit_cell(object):
             This happence according to the work reported in:
             Acta Cryst. (1991). A47, 180-195 [doi:10.1107/S010876739001159X]
         """
-        if not (hasattr(self, "F_0") and hasattr(self, "F_DD") and hasattr(self, "F_DQ")):
+        if not (hasattr(self, "F_0") 
+            and hasattr(self, "F_DD") 
+            and hasattr(self, "F_DQ")):
             self.calc_structure_factor(self.miller)
         if AAS:
             B_inv_T = np.array(self.B.T.inv())
@@ -601,8 +604,10 @@ class unit_cell(object):
             self.Fc_DD = full_transform(B_0_inv_T, self.F_DD)
             self.Fc_DQ = full_transform(B_0_inv_T, self.F_DQ)
         
-        # and now: the rotation into the diffractometer system (means rotation G into xd-direction)
+        # and now: the rotation into the diffractometer system 
+        #       (means rotation G into xd-direction)
         # calculate corresponding angles
+        
         Gc = self.Gc.subs(self.subs)
         
         if Gc[1] == 0: phi = 0
@@ -613,15 +618,22 @@ class unit_cell(object):
         else: xi = sp.atan(Gc[2]/sp.sqrt(Gc[0]**2 + Gc[1]**2))
         
         if simplify:
-            if hasattr(xi, "simplify"):
-                xi = xi.simplify()
+            if hasattr(xi,  "simplify"):
+                xi  = xi.simplify()
             if hasattr(phi, "simplify"):
                 phi = phi.simplify()
         self.xi, self.phi = xi, phi
         
         # introduce rotational matrices
-        self.Phi = np.array([[sp.cos(phi), sp.sin(phi), 0], [-sp.sin(phi), sp.cos(phi), 0], [0,0,1]]) #Drehung um z in -phi Richtung
-        self.Xi = np.array([[sp.cos(xi), 0, sp.sin(xi)], [0,1,0], [-sp.sin(xi), 0, sp.cos(xi)]]) #Drehung um y in xi Richtung
+        #  Drehung um z in -phi Richtung
+        self.Phi = np.array([[ sp.cos(phi), sp.sin(phi), 0], 
+                             [-sp.sin(phi), sp.cos(phi), 0], 
+                             [0,                      0, 1]]) 
+        #  Drehung um y in xi Richtung
+        self.Xi  = np.array([[ sp.cos(xi), 0, sp.sin(xi)],
+                             [          0, 1,          0], 
+                             [-sp.sin(xi), 0, sp.cos(xi)]])
+        
         # combined rotation
         self.Q = np.dot(self.Xi, self.Phi)
         if simplify:
@@ -636,6 +648,18 @@ class unit_cell(object):
             self.Fd_DQ = full_transform(self.Q, self.Fc_DQ)
         self.Gd = sp.Matrix(self.Q) * Gc
         
+    def transform_rec_lat_vec(self, miller, psi=0, inv=False):
+        assert len(miller)==3, "Input has to be vector of length 3."
+        miller = sp.Matrix(miller)
+        OP = sp.Matrix(self.Q) * self.B
+        if psi!=0:
+            Psi = np.array([[1, 0, 0], 
+                           [0,sp.cos(psi),sp.sin(psi)], 
+                           [0, -sp.sin(psi), sp.cos(psi)]])
+            OP = sp.Matrix(Psi) * OP
+        if inv:
+            OP = OP.inv()
+        return OP * miller
     
     def theta_degrees(self, energy=None, h=None, k=None, l=None):
         """
@@ -648,7 +672,8 @@ class unit_cell(object):
         subs = dict(subs)
         return sp.N(self.theta.subs(self.subs).subs(subs) * 180/sp.pi)
     
-    def calc_scattered_amplitude(self, miller=None, psi=None, assume_imag=True, DD=True, DQ=True, simplify=True):
+    def calc_scattered_amplitude(self, miller=None, psi=None, 
+                        assume_imag=True, DD=True, DQ=True, simplify=True):
         if miller==None:
             miller = self.miller
         else:
@@ -666,7 +691,9 @@ class unit_cell(object):
         #vec_k_s = k * np.array([sp.sin(theta), sp.cos(theta), 0]) #alt
         
         # introduce rotational matrix
-        Psi = np.array([[1, 0, 0], [0,sp.cos(psi),sp.sin(psi)], [0, -sp.sin(psi), sp.cos(psi)]])
+        Psi = np.array([[1, 0, 0], 
+                       [0,sp.cos(psi),sp.sin(psi)], 
+                       [0, -sp.sin(psi), sp.cos(psi)]])
         self.Fd_psi_0 = self.Fd_0.simplify()
         if DD:
             self.Fd_psi_DD = full_transform(Psi, self.Fd_DD)
@@ -743,11 +770,14 @@ class unit_cell(object):
             for key in f1.iterkeys():
                 assert key in self.AU_formfactors.keys(), \
                     "Label %s not found in present unit cell"%key
+            f1 = f1.copy()
         if f2==None:
             f2=dict({})
+        else:
             for key in f2.iterkeys():
                 assert key in self.AU_formfactors.keys(), \
                     "Label %s not found in present unit cell"%key
+            f2 = f2.copy()
         if miller==None:
             miller = self.miller
         else:
