@@ -98,3 +98,5 @@ Z = {'Ac':89,
 'Yb':70,
 'Zn':30,
 'Zr':40}
+
+Symbols = dict([(val, key) for (key, val) in Z.iteritems()])
