@@ -10,6 +10,7 @@ Website: http://desy.de/~crichter/
 
 Requirements:
     - python 2
+    - gfortran for deltaf
     - Python Packages:
         - numpy
         - sympy

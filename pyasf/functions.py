@@ -139,7 +139,8 @@ def get_cell_parameters(sg):
             beta=sp.S("pi/2")
             gamma=sp.S("pi/2")
             print "Cubic"
-        else: raise ValueError("Invalid Space Group Number. Has to be in range(1,231).")
+        else: raise ValueError(
+                    "Invalid Space Group Number. Has to be in range(1,231).")
         return a, b, c, alpha, beta, gamma
 
 def get_rec_cell_parameters(a, b, c, alpha, beta, gamma):
