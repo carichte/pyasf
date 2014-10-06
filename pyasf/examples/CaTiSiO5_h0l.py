@@ -19,11 +19,11 @@ cs = pyasf.unit_cell("MyBaseFileName_9837.cif")
 
 hmax = 20
 lmax = 20
-energy = 100000.
+energy = 10000.
 hindizes = range( -hmax, hmax+1)
 lindizes = range( -lmax, lmax+1)
 
-F = cs.get_f(energy, equivalent=True)
+F = cs.get_F0(energy = energy, equivalent=True)
 h, k, l = cs.S["h"], cs.S["k"], cs.S["l"]
 F = F.subs(k,0)
 

@@ -1,47 +1,163 @@
 import os
 import sympy as sp
 import pyxrr
-DBPATH = os.path.join(os.path.split(__file__)[0], "space-groups.sqlite")
-#expanduser("~/Arbeit/Tabellen/space-groups.sqlite")
+import urllib
+import pickle
+DBPATH = os.path.join(os.path.dirname(__file__), "space-groups.sqlite")
+SETTPATH = os.path.join(os.path.dirname(__file__), "settings.dump")
+GENPATH =  os.path.join(os.path.dirname(__file__), "generators.dump")
 
 
-def get_generators(sg):
+def get_ITA_settings(sgnum):
+    if os.path.isfile(SETTPATH):
+        with open(SETTPATH, "r") as fh:
+            transformations = pickle.load(fh)
+    else:
+        transformations = {}
+    
+    if sgnum in transformations:
+        settings = transformations[sgnum]
+    else:
+        from lxml import etree
+        print("Fetching ITA settings for space group %i"%sgnum)
+        baseurl = "http://www.cryst.ehu.es/cgi-bin/cryst/programs/nph-getgen"
+        params = urllib.urlencode({'gnum': sgnum, 'what':'gp', 'settings':'ITA Settings'})
+        result=urllib.urlopen(baseurl, params)
+        result=result.read()
+        parser = etree.HTMLParser()
+        tree = etree.fromstring(result, parser, base_url = baseurl)
+        table = tree[1][3][6][0]
+        settings = dict()
+        for tr in table:
+            children = tr[1].getchildren()
+            if not children:
+                continue
+            elif children[0].tag=="a":
+                a = children[0]
+                trmat = tr[2][0].text
+                setting = ""
+                for i in a:
+                    setting += i.text
+                    if i.tail != None:
+                        setting += i.tail
+                if "origin" in setting:
+                    setting = setting.split("[origin")
+                    #print setting
+                    setting = setting[0] + ":" + setting[1].strip("]")
+                    
+                setting = setting.replace(" ", "")
+                #url = a.attrib["href"]
+                #url = urllib.quote(url, safe="%/:=&?~#+!$,;'@()*[]")
+                #settings[setting] = urllib.basejoin(baseurl, url)
+                settings[setting] = trmat
+        transformations[sgnum] = settings
+        with open(SETTPATH, "w") as fh:
+            pickle.dump(transformations, fh)
+    return settings
+
+
+def fetch_ITA_generators(sgnum, trmat=None):
     """
-        Retrieves all Generators of a given Space Group (sg) a local sqlite database
-        OR from http://www.cryst.ehu.es and stores them into the local sqlite database.
+        Retrieves all Generators of a given Space Group (sgnum) and for an
+        unconventional setting `trmat' if given from
+        http://www.cryst.ehu.es.
     """
+    #url = "http://www.cryst.ehu.es/cgi-bin/cryst/programs/nph-getgen"
+    url =  "http://www.cryst.ehu.es/cgi-bin/cryst/programs/nph-trgen"
+    params = {'gnum': sgnum, 'what':'gp'}
+    if trmat!=None:
+        params["trmat"] = trmat
+    params = urllib.urlencode(params)
+    #print params
+    result = urllib.urlopen(url, params)
+    result = result.read()
+    from lxml import etree
+    parser = etree.HTMLParser()
+    tree = etree.fromstring(result, parser, base_url = url)
+    
+    table = tree[1].find("center").findall("table")[1]
+    
+    
+    generators=[]
+    for tr in list(table) + list(table.find("tbody")):
+        if not isinstance(tr[0].text, str) or not tr[0].text.isdigit():
+            continue
+        #return tr
+        pre = tr[4][0][0][1][0].text
+        generator = map(sp.S, pre.split())
+        generators.append(sp.Matrix(generator).reshape(3,4))
+    return generators
+    
+
+def get_generators(sgnum, sgsym=None):
+    """
+        Retrieves all Generators of a given Space Group Number (sgnum) a local
+        sqlite database OR from http://www.cryst.ehu.es and stores them into
+        the local sqlite database.
+        
+        Inputs:
+            sgnum : int
+                Number of space groupt according to International Tables
+                of Crystallography (ITC) A
+            
+            sgsym : str
+                Full Hermann-Mauguin symbol according to ITC A.
+                In some cases, more than one setting can be chosen for the 
+                space group. Then it is possible to specify the desired 
+                setting by giving the full Hermann-Mauguin symbol here.
+                Otherwise the standard setting will be picked.
+    """
+    if isinstance(sgnum, int):
+        if sgnum < 1 or sgnum > 230:
+            raise ValueError("Space group number must be in range of 1...230")
+        settings = get_ITA_settings(sgnum)
+        setnames = " ".join(settings.keys())
+        if len(settings)==1:
+            sgsym = settings.keys()[0]
+        elif sgsym!=None:
+            if sgsym not in settings:
+                raise ValueError(
+                 "Invalid space group symbol (sgsym) entered: %s%s"\
+                 "  Valid space group settings: %s"\
+                 %(sgsym, os.linesep,setnames))
+        else:
+            print("Warning: Space Group #%i is ambigous:%s"\
+                  "  Possible settings: %s "%(sgnum, os.linesep, setnames))
+            settings_inv = dict([(v,k) for (k,v) in settings.iteritems()])
+            sgsym = settings_inv["a,b,c"]
+            print("  Using standard setting: %s"%sgsym)
+    else:
+        raise ValueError("Integer required for space group number (`sgnum')")
+    trmat = settings[sgsym]
+    
     import sqlite3
-    import urllib
     import base64
-    import pickle
     dbi=sqlite3.connect(DBPATH)
     cur=dbi.cursor()
-    cur.execute("SELECT * FROM spacegroups WHERE spacegroup = '%i'" %int(sg))
+    cur.execute("SELECT * FROM spacegroups WHERE sg_symbol = '%s'" %sgsym)
     result=cur.fetchone()
     dbi.close()
     if result:
         try:
-            return pickle.loads(base64.b64decode(result[1]))
+            return pickle.loads(base64.b64decode(result[2]))
         except:
             dbi=sqlite3.connect(DBPATH)
             cur=dbi.cursor()
-            cur.execute("DELETE FROM spacegroups WHERE spacegroup = '%i'" %int(sg))
+            cur.execute("DELETE FROM spacegroups WHERE sg_symbol = '%s'"%sgsym)
             dbi.commit()
             dbi.close()
             print "Deleted old dataset."
-    print "Space Group " + str(sg) + " not yet in database. Fetching from internet..."
-    generators=[]
-    params = urllib.urlencode({'gnum': sg, 'what':'gp'})
-    result=urllib.urlopen("http://www.cryst.ehu.es/cgi-bin/cryst/programs/nph-getgen", params)
-    result=result.read()
-    while "<pre>" in result:
-        smth=result.partition("<pre>")[2].partition("</pre>")
-        generator = map(sp.S, smth[0].split())
-        generators.append(sp.Matrix(generator).reshape(3,4))
-        result=smth[2]
+    print("Space Group %s not yet in database. "\
+          "Fetching from internet..."%sgsym)
+    generators = fetch_ITA_generators(sgnum, trmat)
+    gendump = base64.b64encode(pickle.dumps(generators))
     dbi=sqlite3.connect(DBPATH)
     cur=dbi.cursor()
-    cur.execute("INSERT INTO spacegroups (spacegroup, generators) VALUES  ('%i', '%s')" % (sg, base64.b64encode(pickle.dumps(generators))))
+    cur.execute("INSERT INTO spacegroups "\
+                  "(sg_symbol, sg_number, generators, trmat) "\
+                "VALUES "\
+                  "('%s', '%i', '%s', '%s')"\
+                 % (sgsym, sgnum, gendump, trmat))
     dbi.commit()
     dbi.close()
     return generators
@@ -62,7 +178,6 @@ def gcd(*args):
             a, b = b%a, a
         
         L.append(b)
-    
     return abs(b)
 
 
@@ -175,15 +290,15 @@ def get_rec_cell_parameters(a, b, c, alpha, beta, gamma):
     betar = sp.acos(G_r[0,2]/(ar*cr))
     gammar = sp.acos(G_r[0,1]/(ar*br))
     
-    B = sp.Matrix([[ar, br*sp.cos(gammar),  cr*sp.cos(betar)],
-                   [0,  br*sp.sin(gammar), -cr*sp.sin(betar)*sp.cos(alpha)],
-                   [0,  0,                  1/c]])
+    B =   sp.Matrix([[ar, br*sp.cos(gammar),  cr*sp.cos(betar)],
+                     [0,  br*sp.sin(gammar), -cr*sp.sin(betar)*sp.cos(alpha)],
+                     [0,  0,                  1/c]])
     #V_0 = sp.sqrt(1 - sp.cos(alphar)**2 - sp.cos(betar)**2 - sp.cos(gammar)**2 + 2*sp.cos(alphar)*sp.cos(betar)*sp.cos(gammar))
     #print V_0
     
-    B_0 = sp.Matrix([[1, sp.cos(gammar),  sp.cos(betar)],
-                     [0, sp.sin(gammar), -sp.sin(betar)*sp.cos(alpha)],
-                     [0, 0,               1]])
+    B_0 = sp.Matrix([[1,  sp.cos(gammar),     sp.cos(betar)],
+                     [0,  sp.sin(gammar),    -sp.sin(betar)*sp.cos(alpha)],
+                     [0,  0,                  1]])
     
     
     

@@ -314,8 +314,10 @@ class unit_cell(object):
                 atomline = Line.split()
                 label = atomline[col_label]
                 symbol = atomline[col_symbol]
-                if symbol[:2].isalpha(): symbol = symbol[:2]
-                else: symbol = symbol[:1]
+                if symbol[:2].isalpha():
+                    symbol = symbol[:2]
+                else:
+                    symbol = symbol[:1]
                 px = sp.S(Fraction(atomline[col_x].partition("(")[0]).limit_denominator(max_denominator)) #)
                 py = sp.S(Fraction(atomline[col_y].partition("(")[0]).limit_denominator(max_denominator)) #)
                 pz = sp.S(Fraction(atomline[col_z].partition("(")[0]).limit_denominator(max_denominator)) #)
@@ -474,7 +476,7 @@ class unit_cell(object):
             self.formfactors[name]=[]
             if self.AU_formfactorsDD.has_key(name):
                 self.formfactorsDD[name]=[]
-            if self.AU_formfactorsDD.has_key(name):
+            if self.AU_formfactorsDQ.has_key(name):
                 self.formfactorsDQ[name]=[]
             for generator in self.generators:
                 W = np.array(generator[:,:3])
@@ -530,9 +532,8 @@ class unit_cell(object):
             Takes the three Miller-indices of Type int and calculates the Structure Factor in the reciprocal basis.
         """
         if miller==None:
-            miller = tuple(self.G)
-        self.subs.update(zip(self.G, miller))
-        self.miller = miller
+            miller = self.miller
+        self.subs.update(zip(self.miller, miller))
         if not hasattr(self, "cell"):
             self.build_unit_cell()
         G = self.G.subs(self.subs)
@@ -581,6 +582,9 @@ class unit_cell(object):
         self.F_DQ += new_F_DQ
 
     
+    def hkl(self):
+        return tuple(self.subs[ind] for ind in self.miller)
+    
     def transform_structure_factor(self, AAS = True, simplify=True):
         """
             First transforms F to a real space, cartesian, crystal-fixed system ->Fc.
@@ -589,10 +593,10 @@ class unit_cell(object):
             This happence according to the work reported in:
             Acta Cryst. (1991). A47, 180-195 [doi:10.1107/S010876739001159X]
         """
-        if not (hasattr(self, "F_0") 
-            and hasattr(self, "F_DD") 
-            and hasattr(self, "F_DQ")):
-            self.calc_structure_factor(self.miller)
+        if not hasattr(self, "F_0") or \
+           (AAS and (not hasattr(self, "F_DD") or not hasattr(self, "F_DQ"))):
+            raise ValueError("No Reflection initialized. "
+                             " Run self.calc_structure_factor() first.")
         if AAS:
             B_inv_T = np.array(self.B.T.inv())
             B_0_inv_T = np.array(self.B_0.T.inv())
@@ -608,7 +612,7 @@ class unit_cell(object):
         #       (means rotation G into xd-direction)
         # calculate corresponding angles
         
-        Gc = self.Gc.subs(self.subs)
+        Gc = self.Gc.subs(zip(self.miller, self.hkl()))
         
         if Gc[1] == 0: phi = 0
         elif Gc[0] == 0: phi = sp.S("pi/2")*sp.sign(Gc[1])
@@ -651,15 +655,15 @@ class unit_cell(object):
     def transform_rec_lat_vec(self, miller, psi=0, inv=False):
         assert len(miller)==3, "Input has to be vector of length 3."
         miller = sp.Matrix(miller)
-        OP = sp.Matrix(self.Q) * self.B
+        UB = sp.Matrix(self.Q) * self.B
         if psi!=0:
             Psi = np.array([[1, 0, 0], 
                            [0,sp.cos(psi),sp.sin(psi)], 
                            [0, -sp.sin(psi), sp.cos(psi)]])
-            OP = sp.Matrix(Psi) * OP
+            UB = sp.Matrix(Psi) * UB
         if inv:
-            OP = OP.inv()
-        return OP * miller
+            UB = UB.inv()
+        return UB * miller
     
     def theta_degrees(self, energy=None, h=None, k=None, l=None):
         """
@@ -672,12 +676,10 @@ class unit_cell(object):
         subs = dict(subs)
         return sp.N(self.theta.subs(self.subs).subs(subs) * 180/sp.pi)
     
-    def calc_scattered_amplitude(self, miller=None, psi=None, 
-                        assume_imag=True, DD=True, DQ=True, simplify=True):
-        if miller==None:
-            miller = self.miller
-        else:
-            self.calc_structure_factor(miller, DQ=DQ)
+    def calc_scattered_amplitude(self, psi=None, assume_imag=True, 
+                                       DD=True, DQ=True, simplify=True):
+        if not hasattr(self, "Fd_0"):
+            self.transform_structure_factor()
         if psi==None:
             psi = sp.Symbol("psi", real=True)
             self.S[psi.name] = psi
@@ -778,16 +780,14 @@ class unit_cell(object):
                 assert key in self.AU_formfactors.keys(), \
                     "Label %s not found in present unit cell"%key
             f2 = f2.copy()
-        if miller==None:
-            miller = self.miller
-        else:
+        if (miller!=None and len(miller)==3) or not hasattr(self, "F_0"):
             self.calc_structure_factor(miller, DD=DD, DQ=DQ)
             self.transform_structure_factor(AAS=(DQ+DD))
             self.f0.clear()
         if not np.all(energy == self.Etab):
             self.f1tab = {}
             self.f2tab = {}
-        for label in self.AU_formfactors.iterkeys():
+        for label in self.AU_formfactors:
             ffsymbol = self.AU_formfactors[label]
             element = self.elements[label]
             
@@ -899,14 +899,11 @@ class unit_cell(object):
         
 
     def get_F0(self, miller=None, energy=None, resonant=True, table="Sasaki", equivalent=False):
-        if miller==None:
-            miller = self.miller
         if energy!=None:
             self.subs[self.energy] = energy
         else:
             energy = float(self.subs[self.energy])
-        h, k, l = miller
-        self.calc_structure_factor((h,k,l))
+        self.calc_structure_factor(miller)
         self.transform_structure_factor(AAS=False)
         
         done = []

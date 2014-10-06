@@ -13,9 +13,6 @@ Then:
     
         python setup.py build -f
 
-    ii) especially for WINDOWS one may have to specify the compiler (e.g. mingw):
-    
-        python setup.py build -f -c mingw32
     
 
 2) If no errors but only warnings have occured copy into packages folder:
