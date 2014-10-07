@@ -586,7 +586,7 @@ class unit_cell(object):
     def hkl(self):
         return tuple(self.subs[ind] for ind in self.miller)
     
-    def transform_structure_factor(self, AAS = True, simplify=True):
+    def transform_structure_factor(self, AAS = True, simplify=True, subs=True):
         """
             First transforms F to a real space, cartesian, crystal-fixed system ->Fc.
             Then transforms Fc to the diffractometer system, which is G along xd and sigma along zd ->Fd.
@@ -641,6 +641,9 @@ class unit_cell(object):
         
         # combined rotation
         self.Q = np.dot(self.Xi, self.Phi)
+        if subs:
+            applymethod(self.Q, "subs", self.subs)
+            applymethod(self.Q, "n")
         if simplify:
             applymethod(self.Q, "simplify")
             if AAS:
@@ -657,6 +660,8 @@ class unit_cell(object):
     def transform_rec_lat_vec(self, miller, psi=0, inv=False):
         assert len(miller)==3, "Input has to be vector of length 3."
         miller = sp.Matrix(miller)
+        if not hasattr(self, "Q"):
+            self.transform_structure_factor()
         UB = self.Q * self.B
         if psi!=0:
             Psi = np.array([[1, 0, 0], 
