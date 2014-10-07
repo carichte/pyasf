@@ -651,12 +651,13 @@ class unit_cell(object):
         if AAS:
             self.Fd_DD = full_transform(self.Q, self.Fc_DD)
             self.Fd_DQ = full_transform(self.Q, self.Fc_DQ)
-        self.Gd = sp.Matrix(self.Q) * Gc
+        self.Q = sp.Matrix(self.Q)
+        self.Gd = self.Q * Gc
         
     def transform_rec_lat_vec(self, miller, psi=0, inv=False):
         assert len(miller)==3, "Input has to be vector of length 3."
         miller = sp.Matrix(miller)
-        UB = sp.Matrix(self.Q) * self.B
+        UB = self.Q * self.B
         if psi!=0:
             Psi = np.array([[1, 0, 0], 
                            [0,sp.cos(psi),sp.sin(psi)], 
@@ -967,7 +968,7 @@ class unit_cell(object):
         
         self.calc_structure_factor(orientation)
         self.transform_structure_factor(AAS=False)
-        Q = sp.Matrix(self.Q)
+        Q = self.Q
         Gc = self.Gc.subs(self.subs).normalized()
         #sintheta = sp.sin(self.theta)
         #costheta = sp.sqrt(1 - sintheta**2)
@@ -979,7 +980,7 @@ class unit_cell(object):
         ref_c.simplify()
         self.calc_structure_factor(miller) # secondary reflection
         self.transform_structure_factor(AAS=False)
-        Q2 = sp.Matrix(self.Q)
+        Q2 = self.Q
         Q2.simplify()
         sintheta2 = sp.sin(self.theta)
         costheta2 = sp.sqrt(1 - sintheta2**2)
