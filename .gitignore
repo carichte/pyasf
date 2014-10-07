@@ -2,8 +2,10 @@
 *.so
 *.zip
 *.pyc
+*~
 *.tar.gz
 *.tar
 *.tgz
 trash/
 build/
+CifFile

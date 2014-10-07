@@ -2,21 +2,17 @@ import os
 import sympy as sp
 import pyxrr
 import urllib
-import pickle
+import cPickle as pickle
+import numpy as np
 DBPATH = os.path.join(os.path.dirname(__file__), "space-groups.sqlite")
-SETTPATH = os.path.join(os.path.dirname(__file__), "settings.dump")
-GENPATH =  os.path.join(os.path.dirname(__file__), "generators.dump")
+SETTPATH = os.path.join(os.path.dirname(__file__), "settings.txt")
 
 
 def get_ITA_settings(sgnum):
     if os.path.isfile(SETTPATH):
-        with open(SETTPATH, "r") as fh:
-            transformations = pickle.load(fh)
-    else:
-        transformations = {}
-    
-    if sgnum in transformations:
-        settings = transformations[sgnum]
+        settings = np.genfromtxt("settings.txt", dtype="i2,O,O")
+        ind = settings["f0"]==sgnum
+        return dict(zip(settings["f1"][ind], settings["f2"][ind]))
     else:
         from lxml import etree
         print("Fetching ITA settings for space group %i"%sgnum)
@@ -50,9 +46,6 @@ def get_ITA_settings(sgnum):
                 #url = urllib.quote(url, safe="%/:=&?~#+!$,;'@()*[]")
                 #settings[setting] = urllib.basejoin(baseurl, url)
                 settings[setting] = trmat
-        transformations[sgnum] = settings
-        with open(SETTPATH, "w") as fh:
-            pickle.dump(transformations, fh)
     return settings
 
 
@@ -77,19 +70,20 @@ def fetch_ITA_generators(sgnum, trmat=None):
     
     table = tree[1].find("center").findall("table")[1]
     
-    
     generators=[]
-    for tr in list(table) + list(table.find("tbody")):
+    genlist = list(table)
+    if table.find("tbody") != None:
+        genlist += list(table.find("tbody"))
+    for tr in genlist:
         if not isinstance(tr[0].text, str) or not tr[0].text.isdigit():
             continue
-        #return tr
         pre = tr[4][0][0][1][0].text
         generator = map(sp.S, pre.split())
         generators.append(sp.Matrix(generator).reshape(3,4))
     return generators
     
 
-def get_generators(sgnum, sgsym=None):
+def get_generators(sgnum=0, sgsym=None):
     """
         Retrieves all Generators of a given Space Group Number (sgnum) a local
         sqlite database OR from http://www.cryst.ehu.es and stores them into
@@ -107,7 +101,12 @@ def get_generators(sgnum, sgsym=None):
                 setting by giving the full Hermann-Mauguin symbol here.
                 Otherwise the standard setting will be picked.
     """
-    if isinstance(sgnum, int):
+    if sgnum==0 and sgsym!=None and os.path.isfile(SETTPATH):
+        settings = np.genfromtxt("settings.txt", dtype="i2,O,O")
+        ind = settings["f1"] == sgsym
+        sgnum = settings["f0"][ind]
+        trmat = settings[ind]
+    elif isinstance(sgnum, int):
         if sgnum < 1 or sgnum > 230:
             raise ValueError("Space group number must be in range of 1...230")
         settings = get_ITA_settings(sgnum)
@@ -126,9 +125,9 @@ def get_generators(sgnum, sgsym=None):
             settings_inv = dict([(v,k) for (k,v) in settings.iteritems()])
             sgsym = settings_inv["a,b,c"]
             print("  Using standard setting: %s"%sgsym)
+        trmat = settings[sgsym]
     else:
         raise ValueError("Integer required for space group number (`sgnum')")
-    trmat = settings[sgsym]
     
     import sqlite3
     import base64

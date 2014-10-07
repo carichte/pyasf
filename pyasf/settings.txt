@@ -1,0 +1,522 @@
+#SG_Number H-M_Symbol Transformation
+  1           P1                                              a,b,c
+  2          P-1                                              a,b,c
+  3         P112                                              c,a,b
+  3         P211                                              b,c,a
+  3         P121                                              a,b,c
+  4        P1121                                              c,a,b
+  4        P2111                                              b,c,a
+  4        P1211                                              a,b,c
+  5         A112                                              c,a,b
+  5         C121                                              a,b,c
+  5         B112                                           a,-a-c,b
+  5         I211                                           b,-a-c,c
+  5         I121                                           c,b,-a-c
+  5         B211                                              b,c,a
+  5         C211                                           b,a,-a-c
+  5         A121                                           -a-c,b,a
+  5         I112                                           -a-c,c,b
+  6         P11m                                              c,a,b
+  6         Pm11                                              b,c,a
+  6         P1m1                                              a,b,c
+  7         Pb11                                              b,c,a
+  7         Pc11                                           b,-a-c,c
+  7         P11b                                           -a-c,c,b
+  7         P1n1                                           -a-c,b,a
+  7         P1a1                                           c,b,-a-c
+  7         Pn11                                           b,a,-a-c
+  7         P1c1                                              a,b,c
+  7         P11a                                              c,a,b
+  7         P11n                                           a,-a-c,b
+  8         Cm11                                           b,a,-a-c
+  8         I11m                                           -a-c,c,b
+  8         Bm11                                              b,c,a
+  8         I1m1                                           c,b,-a-c
+  8         Im11                                           b,-a-c,c
+  8         B11m                                           a,-a-c,b
+  8         A1m1                                           -a-c,b,a
+  8         C1m1                                              a,b,c
+  8         A11m                                              c,a,b
+  9         A1a1                                             c,-b,a
+  9         I1c1                                          -a-c,-b,c
+  9         C1n1                                          a,-b,-a-c
+  9         I1a1                                           c,b,-a-c
+  9         I11b                                           -a-c,c,b
+  9         Bb11                                              b,c,a
+  9         Bn11                                          -b,-a-c,a
+  9         A11a                                              c,a,b
+  9         I11a                                          c,-a-c,-b
+  9         C1c1                                              a,b,c
+  9         B11n                                           a,-a-c,b
+  9         Cc11                                             -b,a,c
+  9         Cn11                                           b,a,-a-c
+  9         B11b                                             a,c,-b
+  9         Ib11                                          -b,c,-a-c
+  9         A1n1                                           -a-c,b,a
+  9         Ic11                                           b,-a-c,c
+  9         A11n                                          -a-c,a,-b
+ 10       P112/m                                              c,a,b
+ 10       P12/m1                                              a,b,c
+ 10       P2/m11                                              b,c,a
+ 11      P1121/m                                              c,a,b
+ 11      P121/m1                                              a,b,c
+ 11      P21/m11                                              b,c,a
+ 12       B112/m                                           a,-a-c,b
+ 12       A112/m                                              c,a,b
+ 12       C2/m11                                           b,a,-a-c
+ 12       C12/m1                                              a,b,c
+ 12       B2/m11                                              b,c,a
+ 12       I2/m11                                           b,-a-c,c
+ 12       I12/m1                                           c,b,-a-c
+ 12       A12/m1                                           -a-c,b,a
+ 12       I112/m                                           -a-c,c,b
+ 13       P112/n                                           a,-a-c,b
+ 13       P12/a1                                           c,b,-a-c
+ 13       P112/b                                           -a-c,c,b
+ 13       P112/a                                              c,a,b
+ 13       P12/c1                                              a,b,c
+ 13       P12/n1                                           -a-c,b,a
+ 13       P2/b11                                              b,c,a
+ 13       P2/c11                                           b,-a-c,c
+ 13       P2/n11                                           b,a,-a-c
+ 14      P1121/n                                           a,-a-c,b
+ 14      P21/c11                                           b,-a-c,c
+ 14      P121/n1                                           -a-c,b,a
+ 14      P1121/b                                           -a-c,c,b
+ 14      P1121/a                                              c,a,b
+ 14      P21/n11                                           b,a,-a-c
+ 14      P121/a1                                           c,b,-a-c
+ 14      P21/b11                                              b,c,a
+ 14      P121/c1                                              a,b,c
+ 15       C2/n11                                           b,a,-a-c
+ 15       A12/n1                                           -a-c,b,a
+ 15       B112/b                                             a,c,-b
+ 15       A112/n                                          -a-c,a,-b
+ 15       B112/n                                           a,-a-c,b
+ 15       A112/a                                              c,a,b
+ 15       B2/n11                                          -b,-a-c,a
+ 15       A12/a1                                             c,-b,a
+ 15       C12/n1                                          a,-b,-a-c
+ 15       I12/c1                                          -a-c,-b,c
+ 15       I112/b                                           -a-c,c,b
+ 15       I2/c11                                           b,-a-c,c
+ 15       C12/c1                                              a,b,c
+ 15       I2/b11                                          -b,c,-a-c
+ 15       I12/a1                                           c,b,-a-c
+ 15       C2/c11                                             -b,a,c
+ 15       I112/a                                          c,-a-c,-b
+ 15       B2/b11                                              b,c,a
+ 16         P222                                              a,b,c
+ 17        P2212                                              b,c,a
+ 17        P2122                                              c,a,b
+ 17        P2221                                              a,b,c
+ 18       P21212                                              a,b,c
+ 18       P22121                                              c,a,b
+ 18       P21221                                              b,c,a
+ 19      P212121                                              a,b,c
+ 20        A2122                                              c,a,b
+ 20        C2221                                              a,b,c
+ 20        B2212                                              b,c,a
+ 21         B222                                              b,c,a
+ 21         A222                                              c,a,b
+ 21         C222                                              a,b,c
+ 22         F222                                              a,b,c
+ 23         I222                                              a,b,c
+ 24      I212121                                              a,b,c
+ 25         Pmm2                                              a,b,c
+ 25         P2mm                                              c,a,b
+ 25         Pm2m                                              b,c,a
+ 26        P21am                                             -c,b,a
+ 26        Pmc21                                              a,b,c
+ 26        P21ma                                              c,a,b
+ 26        Pm21b                                             a,-c,b
+ 26        Pcm21                                             b,a,-c
+ 26        Pb21m                                              b,c,a
+ 27         Pcc2                                              a,b,c
+ 27         P2aa                                              c,a,b
+ 27         Pb2b                                              b,c,a
+ 28         P2cm                                             -c,b,a
+ 28         Pbm2                                             b,a,-c
+ 28         Pc2m                                              b,c,a
+ 28         Pm2a                                             a,-c,b
+ 28         P2mb                                              c,a,b
+ 28         Pma2                                              a,b,c
+ 29        P21ab                                              c,a,b
+ 29        Pbc21                                             b,a,-c
+ 29        Pb21a                                             a,-c,b
+ 29        P21ca                                             -c,b,a
+ 29        Pc21b                                              b,c,a
+ 29        Pca21                                              a,b,c
+ 30         Pb2n                                              b,c,a
+ 30         Pnc2                                              a,b,c
+ 30         Pcn2                                             b,a,-c
+ 30         P2na                                              c,a,b
+ 30         Pn2b                                             a,-c,b
+ 30         P2an                                             -c,b,a
+ 31        Pm21n                                             a,-c,b
+ 31        P21nm                                             -c,b,a
+ 31        Pn21m                                              b,c,a
+ 31        Pnm21                                             b,a,-c
+ 31        P21mn                                              c,a,b
+ 31        Pmn21                                              a,b,c
+ 32         P2cb                                              c,a,b
+ 32         Pba2                                              a,b,c
+ 32         Pc2a                                              b,c,a
+ 33        P21nb                                              c,a,b
+ 33        P21cn                                             -c,b,a
+ 33        Pbn21                                             b,a,-c
+ 33        Pc21n                                              b,c,a
+ 33        Pna21                                              a,b,c
+ 33        Pn21a                                             a,-c,b
+ 34         Pnn2                                              a,b,c
+ 34         Pn2n                                              b,c,a
+ 34         P2nn                                              c,a,b
+ 35         Bm2m                                              b,c,a
+ 35         A2mm                                              c,a,b
+ 35         Cmm2                                              a,b,c
+ 36        A21ma                                              c,a,b
+ 36        Cmc21                                              a,b,c
+ 36        Ccm21                                             b,a,-c
+ 36        Bb21m                                              b,c,a
+ 36        A21am                                             -c,b,a
+ 36        Bm21b                                             a,-c,b
+ 37         Ccc2                                              a,b,c
+ 37         A2aa                                              c,a,b
+ 37         Bb2b                                              b,c,a
+ 38         Am2m                                             a,-c,b
+ 38         Amm2                                              a,b,c
+ 38         Bmm2                                             b,a,-c
+ 38         Cm2m                                              b,c,a
+ 38         B2mm                                              c,a,b
+ 38         C2mm                                             -c,b,a
+ 39         B2em                                              c,a,b
+ 39         Ae2m                                             a,-c,b
+ 39         Aem2                                              a,b,c
+ 39         C2me                                             -c,b,a
+ 39         Bme2                                             b,a,-c
+ 39         Cm2e                                              b,c,a
+ 40         Am2a                                             a,-c,b
+ 40         Cc2m                                              b,c,a
+ 40         B2mb                                              c,a,b
+ 40         Ama2                                              a,b,c
+ 40         C2cm                                             -c,b,a
+ 40         Bbm2                                             b,a,-c
+ 41         Cc2e                                              b,c,a
+ 41         B2eb                                              c,a,b
+ 41         Bbe2                                             b,a,-c
+ 41         C2ce                                             -c,b,a
+ 41         Aea2                                              a,b,c
+ 41         Ae2a                                             a,-c,b
+ 42         Fm2m                                              b,c,a
+ 42         Fmm2                                              a,b,c
+ 42         F2mm                                              c,a,b
+ 43         Fd2d                                              b,c,a
+ 43         F2dd                                              c,a,b
+ 43         Fdd2                                              a,b,c
+ 44         Im2m                                              b,c,a
+ 44         Imm2                                              a,b,c
+ 44         I2mm                                              c,a,b
+ 45         Iba2                                              a,b,c
+ 45         Ic2a                                              b,c,a
+ 45         I2cb                                              c,a,b
+ 46         I2cm                                             -c,b,a
+ 46         I2mb                                              c,a,b
+ 46         Ic2m                                              b,c,a
+ 46         Im2a                                             a,-c,b
+ 46         Ibm2                                             b,a,-c
+ 46         Ima2                                              a,b,c
+ 47         Pmmm                                              a,b,c
+ 48       Pnnn:2                                              a,b,c
+ 48       Pnnn:1                                  a+1/4,b+1/4,c+1/4
+ 49         Pmaa                                              c,a,b
+ 49         Pbmb                                              b,c,a
+ 49         Pccm                                              a,b,c
+ 50       Pban:2                                              a,b,c
+ 50       Pban:1                                      a+1/4,b+1/4,c
+ 50       Pncb:1                                      c+1/4,a+1/4,b
+ 50       Pcna:1                                      b+1/4,c+1/4,a
+ 50       Pcna:2                                              b,c,a
+ 50       Pncb:2                                              c,a,b
+ 51         Pmam                                             a,-c,b
+ 51         Pmmb                                             b,a,-c
+ 51         Pmma                                              a,b,c
+ 51         Pcmm                                             -c,b,a
+ 51         Pbmm                                              c,a,b
+ 51         Pmcm                                              b,c,a
+ 52         Pncn                                              b,c,a
+ 52         Pbnn                                              c,a,b
+ 52         Pcnn                                             -c,b,a
+ 52         Pnna                                              a,b,c
+ 52         Pnnb                                             b,a,-c
+ 52         Pnan                                             a,-c,b
+ 53         Pncm                                              b,c,a
+ 53         Pnmb                                             b,a,-c
+ 53         Pman                                             a,-c,b
+ 53         Pcnm                                             -c,b,a
+ 53         Pmna                                              a,b,c
+ 53         Pbmn                                              c,a,b
+ 54         Pbaa                                              c,a,b
+ 54         Pbab                                             a,-c,b
+ 54         Pccb                                             b,a,-c
+ 54         Pcca                                              a,b,c
+ 54         Pcaa                                             -c,b,a
+ 54         Pbcb                                              b,c,a
+ 55         Pcma                                              b,c,a
+ 55         Pmcb                                              c,a,b
+ 55         Pbam                                              a,b,c
+ 56         Pccn                                              a,b,c
+ 56         Pnaa                                              c,a,b
+ 56         Pbnb                                              b,c,a
+ 57         Pcam                                             b,a,-c
+ 57         Pmab                                             -c,b,a
+ 57         Pbma                                              b,c,a
+ 57         Pbcm                                              a,b,c
+ 57         Pmca                                              c,a,b
+ 57         Pcmb                                             a,-c,b
+ 58         Pmnn                                              c,a,b
+ 58         Pnnm                                              a,b,c
+ 58         Pnmn                                              b,c,a
+ 59       Pmnm:2                                              b,c,a
+ 59       Pmnm:1                                      b+1/4,c+1/4,a
+ 59       Pnmm:1                                      c+1/4,a+1/4,b
+ 59       Pnmm:2                                              c,a,b
+ 59       Pmmn:1                                      a+1/4,b+1/4,c
+ 59       Pmmn:2                                              a,b,c
+ 60         Pcan                                             b,a,-c
+ 60         Pcnb                                             a,-c,b
+ 60         Pbna                                              b,c,a
+ 60         Pnca                                              c,a,b
+ 60         Pbcn                                              a,b,c
+ 60         Pnab                                             -c,b,a
+ 61         Pbca                                              a,b,c
+ 61         Pcab                                             b,a,-c
+ 62         Pnma                                              a,b,c
+ 62         Pbnm                                              c,a,b
+ 62         Pcmn                                             -c,b,a
+ 62         Pmnb                                             b,a,-c
+ 62         Pmcn                                              b,c,a
+ 62         Pnam                                             a,-c,b
+ 63         Amma                                              c,a,b
+ 63         Bmmb                                             a,-c,b
+ 63         Cmcm                                              a,b,c
+ 63         Amam                                             -c,b,a
+ 63         Bbmm                                              b,c,a
+ 63         Ccmm                                             b,a,-c
+ 64         Bmeb                                             a,-c,b
+ 64         Cmce                                              a,b,c
+ 64         Aeam                                             -c,b,a
+ 64         Ccme                                             b,a,-c
+ 64         Bbem                                              b,c,a
+ 64         Aema                                              c,a,b
+ 65         Cmmm                                              a,b,c
+ 65         Ammm                                              c,a,b
+ 65         Bmmm                                              b,c,a
+ 66         Amaa                                              c,a,b
+ 66         Bbmb                                              b,c,a
+ 66         Cccm                                              a,b,c
+ 67         Cmme                                              a,b,c
+ 67         Aemm                                              c,a,b
+ 67         Bmem                                              b,c,a
+ 68       Aeaa:1                                      c,a+1/4,b+1/4
+ 68       Aeaa:2                                              c,a,b
+ 68       Bbeb:1                                      b,c+1/4,a+1/4
+ 68       Bbeb:2                                              b,c,a
+ 68       Ccce:2                                              a,b,c
+ 68       Ccce:1                                      a,b+1/4,c+1/4
+ 69         Fmmm                                              a,b,c
+ 70       Fddd:2                                              a,b,c
+ 70       Fddd:1                                  a-1/8,b-1/8,c-1/8
+ 71         Immm                                              a,b,c
+ 72         Icma                                              b,c,a
+ 72         Imcb                                              c,a,b
+ 72         Ibam                                              a,b,c
+ 73         Ibca                                              a,b,c
+ 73         Icab                                             b,a,-c
+ 74         Imam                                             a,-c,b
+ 74         Icmm                                             -c,b,a
+ 74         Imma                                              a,b,c
+ 74         Imcm                                              b,c,a
+ 74         Immb                                             b,a,-c
+ 74         Ibmm                                              c,a,b
+ 75           P4                                              a,b,c
+ 76          P41                                              a,b,c
+ 77          P42                                              a,b,c
+ 78          P43                                              a,b,c
+ 79           I4                                              a,b,c
+ 80          I41                                              a,b,c
+ 81          P-4                                              a,b,c
+ 82          I-4                                              a,b,c
+ 83         P4/m                                              a,b,c
+ 84        P42/m                                              a,b,c
+ 85       P4/n:2                                              a,b,c
+ 85       P4/n:1                                      a-1/4,b+1/4,c
+ 86      P42/n:1                                  a-1/4,b-1/4,c-1/4
+ 86      P42/n:2                                              a,b,c
+ 87         I4/m                                              a,b,c
+ 88      I41/a:1                                      a,b-1/4,c-1/8
+ 88      I41/a:2                                              a,b,c
+ 89         P422                                              a,b,c
+ 90        P4212                                              a,b,c
+ 91        P4122                                              a,b,c
+ 92       P41212                                              a,b,c
+ 93        P4222                                              a,b,c
+ 94       P42212                                              a,b,c
+ 95        P4322                                              a,b,c
+ 96       P43212                                              a,b,c
+ 97         I422                                              a,b,c
+ 98        I4122                                              a,b,c
+ 99         P4mm                                              a,b,c
+100         P4bm                                              a,b,c
+101        P42cm                                              a,b,c
+102        P42nm                                              a,b,c
+103         P4cc                                              a,b,c
+104         P4nc                                              a,b,c
+105        P42mc                                              a,b,c
+106        P42bc                                              a,b,c
+107         I4mm                                              a,b,c
+108         I4cm                                              a,b,c
+109        I41md                                              a,b,c
+110        I41cd                                              a,b,c
+111        P-42m                                              a,b,c
+112        P-42c                                              a,b,c
+113       P-421m                                              a,b,c
+114       P-421c                                              a,b,c
+115        P-4m2                                              a,b,c
+116        P-4c2                                              a,b,c
+117        P-4b2                                              a,b,c
+118        P-4n2                                              a,b,c
+119        I-4m2                                              a,b,c
+120        I-4c2                                              a,b,c
+121        I-42m                                              a,b,c
+122        I-42d                                              a,b,c
+123       P4/mmm                                              a,b,c
+124       P4/mcc                                              a,b,c
+125     P4/nbm:2                                              a,b,c
+125     P4/nbm:1                                      a-1/4,b-1/4,c
+126     P4/nnc:1                                  a-1/4,b-1/4,c-1/4
+126     P4/nnc:2                                              a,b,c
+127       P4/mbm                                              a,b,c
+128       P4/mnc                                              a,b,c
+129     P4/nmm:2                                              a,b,c
+129     P4/nmm:1                                      a-1/4,b+1/4,c
+130     P4/ncc:2                                              a,b,c
+130     P4/ncc:1                                      a-1/4,b+1/4,c
+131      P42/mmc                                              a,b,c
+132      P42/mcm                                              a,b,c
+133    P42/nbc:2                                              a,b,c
+133    P42/nbc:1                                  a-1/4,b+1/4,c-1/4
+134    P42/nnm:1                                  a-1/4,b+1/4,c-1/4
+134    P42/nnm:2                                              a,b,c
+135      P42/mbc                                              a,b,c
+136      P42/mnm                                              a,b,c
+137    P42/nmc:2                                              a,b,c
+137    P42/nmc:1                                  a-1/4,b+1/4,c-1/4
+138    P42/ncm:2                                              a,b,c
+138    P42/ncm:1                                  a-1/4,b+1/4,c-1/4
+139       I4/mmm                                              a,b,c
+140       I4/mcm                                              a,b,c
+141    I41/amd:1                                      a,b+1/4,c-1/8
+141    I41/amd:2                                              a,b,c
+142    I41/acd:2                                              a,b,c
+142    I41/acd:1                                      a,b+1/4,c-1/8
+143           P3                                              a,b,c
+144          P31                                              a,b,c
+145          P32                                              a,b,c
+146         R3:r     2/3a+1/3b+1/3c,-1/3a+1/3b+1/3c,-1/3a-2/3b+1/3c
+146         R3:h                                              a,b,c
+147          P-3                                              a,b,c
+148        R-3:h                                              a,b,c
+148        R-3:r     2/3a+1/3b+1/3c,-1/3a+1/3b+1/3c,-1/3a-2/3b+1/3c
+149         P312                                              a,b,c
+150         P321                                              a,b,c
+151        P3112                                              a,b,c
+152        P3121                                              a,b,c
+153        P3212                                              a,b,c
+154        P3221                                              a,b,c
+155        R32:r     2/3a+1/3b+1/3c,-1/3a+1/3b+1/3c,-1/3a-2/3b+1/3c
+155        R32:h                                              a,b,c
+156         P3m1                                              a,b,c
+157         P31m                                              a,b,c
+158         P3c1                                              a,b,c
+159         P31c                                              a,b,c
+160        R3m:h                                              a,b,c
+160        R3m:r     2/3a+1/3b+1/3c,-1/3a+1/3b+1/3c,-1/3a-2/3b+1/3c
+161        R3c:r     2/3a+1/3b+1/3c,-1/3a+1/3b+1/3c,-1/3a-2/3b+1/3c
+161        R3c:h                                              a,b,c
+162        P-31m                                              a,b,c
+163        P-31c                                              a,b,c
+164        P-3m1                                              a,b,c
+165        P-3c1                                              a,b,c
+166       R-3m:r     2/3a+1/3b+1/3c,-1/3a+1/3b+1/3c,-1/3a-2/3b+1/3c
+166       R-3m:h                                              a,b,c
+167       R-3c:h                                              a,b,c
+167       R-3c:r     2/3a+1/3b+1/3c,-1/3a+1/3b+1/3c,-1/3a-2/3b+1/3c
+168           P6                                              a,b,c
+169          P61                                              a,b,c
+170          P65                                              a,b,c
+171          P62                                              a,b,c
+172          P64                                              a,b,c
+173          P63                                              a,b,c
+174          P-6                                              a,b,c
+175         P6/m                                              a,b,c
+176        P63/m                                              a,b,c
+177         P622                                              a,b,c
+178        P6122                                              a,b,c
+179        P6522                                              a,b,c
+180        P6222                                              a,b,c
+181        P6422                                              a,b,c
+182        P6322                                              a,b,c
+183         P6mm                                              a,b,c
+184         P6cc                                              a,b,c
+185        P63cm                                              a,b,c
+186        P63mc                                              a,b,c
+187        P-6m2                                              a,b,c
+188        P-6c2                                              a,b,c
+189        P-62m                                              a,b,c
+190        P-62c                                              a,b,c
+191       P6/mmm                                              a,b,c
+192       P6/mcc                                              a,b,c
+193      P63/mcm                                              a,b,c
+194      P63/mmc                                              a,b,c
+195          P23                                              a,b,c
+196          F23                                              a,b,c
+197          I23                                              a,b,c
+198         P213                                              a,b,c
+199         I213                                              a,b,c
+200         Pm-3                                              a,b,c
+201       Pn-3:2                                              a,b,c
+201       Pn-3:1                                  a-1/4,b-1/4,c-1/4
+202         Fm-3                                              a,b,c
+203       Fd-3:2                                              a,b,c
+203       Fd-3:1                                  a-1/8,b-1/8,c-1/8
+204         Im-3                                              a,b,c
+205         Pa-3                                              a,b,c
+206         Ia-3                                              a,b,c
+207         P432                                              a,b,c
+208        P4232                                              a,b,c
+209         F432                                              a,b,c
+210        F4132                                              a,b,c
+211         I432                                              a,b,c
+212        P4332                                              a,b,c
+213        P4132                                              a,b,c
+214        I4132                                              a,b,c
+215        P-43m                                              a,b,c
+216        F-43m                                              a,b,c
+217        I-43m                                              a,b,c
+218        P-43n                                              a,b,c
+219        F-43c                                              a,b,c
+220        I-43d                                              a,b,c
+221        Pm-3m                                              a,b,c
+222      Pn-3n:1                                  a-1/4,b-1/4,c-1/4
+222      Pn-3n:2                                              a,b,c
+223        Pm-3n                                              a,b,c
+224      Pn-3m:2                                              a,b,c
+224      Pn-3m:1                                  a-1/4,b-1/4,c-1/4
+225        Fm-3m                                              a,b,c
+226        Fm-3c                                              a,b,c
+227      Fd-3m:2                                              a,b,c
+227      Fd-3m:1                                  a-1/8,b-1/8,c-1/8
+228      Fd-3c:1                                  a-3/8,b-3/8,c-3/8
+228      Fd-3c:2                                              a,b,c
+229        Im-3m                                              a,b,c
+230        Ia-3d                                              a,b,c

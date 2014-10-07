@@ -8,18 +8,20 @@
     http://www.desy.de/~crichter
 """
 
+import types
+import itertools
+import copy
 import sympy as sp
 import numpy as np
-import copy
+import pyxrr.functions as pf
+import CifFile
+import difflib
 from time import time
 from functions import *
-import pyxrr.functions as pf
 from fractions import Fraction
 from scipy.interpolate import interp1d
 from sympy.utilities import lambdify
-import deltaf
-import types
-import itertools
+import elements
 #mydict = dict({"Abs":abs})
 #epsilon=1.e-10
 
@@ -114,22 +116,33 @@ class unit_cell(object):
         """
         
         if str(structure).isdigit():
-            sg = int(structure)
+            sg_num = int(structure)
             self.cif = False
-        elif os.path.isfile(structure):
-            self.cif = True
-            fobject = open(structure, "r")
-            content = fobject.readlines()
-            fobject.close()
-            #print content.partition("_symmetry_int_tables_number")[2]
-            for line in content:
-                if line.lower().startswith("_symmetry_int_tables_number"):
-                    sg = line.split()[-1]
-                    break
+        elif os.path.isfile(structure) and \
+             os.path.splitext(structure)[1].lower()=="cif":
             try:
-                sg = int(sg)
+                CifFile.ReadCif(path)
+                self.cif = cf.first_block()
+            except Exception as e:
+                print("File doesn't seem to be a valid .cif file: %s"%path)
+                raise IOError(e)
+            try:
+                sg_num = int(self.cif["_symmetry_int_tables_number"])
             except Exception as errmsg:
                 raise ValueError("space group number could not be determined from .cif file `%s`:\n%s"%(structure, errmsg))
+            ITA = get_ITA_settings(sg_num)
+            if len(ITA)>1:
+                print("Multiple settings found in space group %i"%sg_num)
+                if self.cif.has_key("_symmetry_space_group_name_h-m"):
+                    sg_sym = self.cif["_symmetry_space_group_name_h-m"]
+                    sg_sym = "".join(sg_sym.split()).lower()
+                    settings = ITA.keys()
+                    ratios = [difflib.SequenceMatcher(a=sg_sym, b=set).ratio() for set in settings.keys()]
+                    setting = settings[np.argmax(ratios)]
+                    print("  Identified symbol `%s' from .cif entry `%s'"\
+                          %(setting, sg_sym))
+                    sg_sym = setting
+                    
         else:
             raise IOError("Invalid input for structure. Has to be either space group number or path to .cif-file")
             
@@ -138,10 +151,10 @@ class unit_cell(object):
         self.AU_formfactorsDD = {} # only asymmetric unit, pure dipolar
         self.AU_formfactorsDQ = {} # only asymmetric unit, dipolar-quadrupolar interference
         self.symmetries = {}
-        self.sg = sg
-        self.generators=get_generators(sg) # fetch the space group generators
+        self.sg_num = sg_num
+        self.generators=get_generators(sg_num) # fetch the space group generators
         
-        metrik = get_cell_parameters(sg)
+        metrik = get_cell_parameters(sg_num)
         self.a, self.b, self.c, self.alpha, self.beta, self.gamma = metrik
         recparam = get_rec_cell_parameters(self.a, self.b, self.c, self.alpha, self.beta, self.gamma)
         self.ar, self.br, self.cr = recparam[:3] # reciprocal lattice parameters
@@ -208,9 +221,9 @@ class unit_cell(object):
         labeltest = label[0].upper()
         if len(label) > 1:
             labeltest += label[1].lower()
-        if labeltest in deltaf.elements.Z.keys():
+        if labeltest in elements.Z.keys():
             element = labeltest
-        elif labeltest[:1] in deltaf.elements.Z.keys():
+        elif labeltest[:1] in elements.Z.keys():
             element = labeltest[:1]
         else:
             raise ValueError("Atom label should start with the symbol of the chemical element" + \
@@ -273,6 +286,15 @@ class unit_cell(object):
         lines.reverse()
         num_atom = 0
         self.cifinfo = {}
+        def getcoord(atomline, col):
+            coord = atomline[col].partition(ord(40))[0]
+            coord = Fraction(coord)
+            coord = coord.limit_denominator(max_denominator)
+        def getangle(line):
+            ang = line.split()[1].partition(ord(40))[0]
+            ang = float(ang) / 180
+            ang = Fraction("%.15f"%ang)
+            ang = sp.S(ang.limit_denominator(max_denominator)) * sp.pi
         while lines:
             Line = lines.pop()
             Line = Line.replace("\t", " ")
@@ -288,20 +310,11 @@ class unit_cell(object):
             elif line.startswith("_cell_length_c"):
                 self.subs[self.c] = float(Line.split()[1].partition("(")[0]) #)
             elif line.startswith("_cell_angle_alpha"):
-                alpha = float(Line.split()[1].partition("(")[0]) #)
-                alpha /= 180
-                alpha = sp.S(Fraction("%.15f"%alpha).limit_denominator(max_denominator)) * sp.pi
-                self.subs[self.alpha] = alpha
+                self.subs[self.alpha] = getangle(Line)
             elif line.startswith("_cell_angle_beta"):
-                beta = float(Line.split()[1].partition("(")[0]) #)
-                beta /= 180
-                beta = sp.S(Fraction("%.15f"%beta).limit_denominator(max_denominator)) * sp.pi
-                self.subs[self.beta] = beta
+                self.subs[self.beta] = getangle(Line)
             elif line.startswith("_cell_angle_gamma"):
-                gamma = float(Line.split()[1].partition("(")[0]) #)
-                gamma /= 180
-                gamma = sp.S(Fraction("%.15f"%gamma).limit_denominator(max_denominator)) * sp.pi
-                self.subs[self.gamma] = gamma
+                self.subs[self.gamma] = getangle(Line)
             elif line.startswith("_atom_site"):
                 if line.startswith("_atom_site_label"): col_label = num_atom
                 elif line.startswith("_atom_site_type_symbol"): col_symbol = num_atom
@@ -318,9 +331,9 @@ class unit_cell(object):
                     symbol = symbol[:2]
                 else:
                     symbol = symbol[:1]
-                px = sp.S(Fraction(atomline[col_x].partition("(")[0]).limit_denominator(max_denominator)) #)
-                py = sp.S(Fraction(atomline[col_y].partition("(")[0]).limit_denominator(max_denominator)) #)
-                pz = sp.S(Fraction(atomline[col_z].partition("(")[0]).limit_denominator(max_denominator)) #)
+                px = sp.S(getcoord(atomline, col_x))
+                py = sp.S(getcoord(atomline, col_y))
+                pz = sp.S(getcoord(atomline, col_z))
                 position = (px, py, pz)
                 isotropic = (symbol not in resonant)
                 if self.DEBUG:
@@ -791,7 +804,7 @@ class unit_cell(object):
             ffsymbol = self.AU_formfactors[label]
             element = self.elements[label]
             
-            Z = deltaf.elements.Z[element]
+            Z = elements.Z[element]
             
             if not self.f0.has_key(element):
                 if self.DEBUG: print("Calculating nonresonant scattering amplitude for %s"%element)
@@ -821,6 +834,7 @@ class unit_cell(object):
                 else:
                     print("Fetching tabulated dispersion correction values for %s from %s"%(element, table))
                     if table=="deltaf":
+                        import deltaf
                         # here the dispersion correction is calculated
                         #f1tab, f2tab = deltaf.getfquad(element, energy - self.dE[name], fwhm_ev)
                         f1tab = deltaf.getfquad(element, energy - dE, fwhm_ev, f1f2="f1")
@@ -872,7 +886,7 @@ class unit_cell(object):
         for label in self.AU_formfactors.iterkeys():
             ffsymbol = self.AU_formfactors[label]
             element = self.elements[label]
-            Z = deltaf.elements.Z[element]
+            Z = elements.Z[element]
             f0 = self.f0func[element].dictcall(self.subs)
             if ffsymbol.name.endswith("_0"):
                 self.subs[ffsymbol] = f0
@@ -921,7 +935,7 @@ class unit_cell(object):
             
             if self.DEBUG:
                 print("Calculating nonresonant f_0 for %s..." %ffsymbol.name)
-            Z = deltaf.elements.Z[element]
+            Z = elements.Z[element]
             f0 = self.f0func[element].dictcall(self.subs)
 
             if ffsymbol.name.endswith("_0"):
