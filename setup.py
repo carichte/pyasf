@@ -7,11 +7,7 @@ if len(sys.argv)<2:
 
 
 
-instpackage = ["pyasf"]
-try:
-    import CifFile
-except:
-    instpackage.append("CifFile")
+instpackage = ["pyasf", "CifFile"]
 
 setup( name = "pyasf", 
        version = "0.1",
