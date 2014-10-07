@@ -5,10 +5,18 @@ import sys
 if len(sys.argv)<2:
     print("see install.txt for installation instructions.")
 
+
+
+instpackage = ["pyasf"]
+try:
+    import CifFile
+except:
+    instpackage.append("CifFile")
+
 setup( name = "pyasf", 
        version = "0.1",
-       packages = ["pyasf"],
-       package_data = {"pyasf": ["space-groups.sqlite", "spacegroup.txt"]},
+       packages = instpackage,
+       package_data = {"pyasf": ["space-groups.sqlite", "settings.txt", "f0_lowq.sqlite"]},
        author = "Carsten Richter",
        author_email = "carsten.richter@desy.de",
        description = "Software for symbolical calculation of the anisotropic tensor of susceptibility and the anisotropic structure factor (ASF).",

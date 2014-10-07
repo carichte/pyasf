@@ -1,16 +1,16 @@
 import os
 import sympy as sp
-import pyxrr
 import urllib
 import cPickle as pickle
 import numpy as np
 DBPATH = os.path.join(os.path.dirname(__file__), "space-groups.sqlite")
+f0PATH = os.path.join(os.path.dirname(__file__), "f0_lowq.sqlite")
 SETTPATH = os.path.join(os.path.dirname(__file__), "settings.txt")
 
 
 def get_ITA_settings(sgnum):
     if os.path.isfile(SETTPATH):
-        settings = np.genfromtxt("settings.txt", dtype="i2,O,O")
+        settings = np.genfromtxt(SETTPATH, dtype="i2,O,O")
         ind = settings["f0"]==sgnum
         return dict(zip(settings["f1"][ind], settings["f2"][ind]))
     else:
@@ -101,11 +101,21 @@ def get_generators(sgnum=0, sgsym=None):
                 setting by giving the full Hermann-Mauguin symbol here.
                 Otherwise the standard setting will be picked.
     """
+    if isinstance(sgnum, str):
+        if sgnum.isdigit():
+            sgnum = int(sgnum)
+        else:
+            if sgsym==None:
+                sgsym = str(sgnum)
+            sgnum = 0
     if sgnum==0 and sgsym!=None and os.path.isfile(SETTPATH):
-        settings = np.genfromtxt("settings.txt", dtype="i2,O,O")
+        settings = np.genfromtxt(SETTPATH, dtype="i2,O,O")
         ind = settings["f1"] == sgsym
-        sgnum = settings["f0"][ind]
-        trmat = settings[ind]
+        if not ind.sum()==1:
+            raise ValueError("Space group not found: %s"%sgsym)
+        sgnum, _, trmat = settings[ind].item()
+        #sgnum = settings["f0"][ind].item()
+        #trmat = settings["f2"]][ind]
     elif isinstance(sgnum, int):
         if sgnum < 1 or sgnum > 230:
             raise ValueError("Space group number must be in range of 1...230")
@@ -148,6 +158,7 @@ def get_generators(sgnum=0, sgsym=None):
             print "Deleted old dataset."
     print("Space Group %s not yet in database. "\
           "Fetching from internet..."%sgsym)
+    print sgnum, trmat
     generators = fetch_ITA_generators(sgnum, trmat)
     gendump = base64.b64encode(pickle.dumps(generators))
     dbi=sqlite3.connect(DBPATH)
@@ -201,7 +212,7 @@ def full_transform(Matrix, Tensor):
         Tensor = numpy.tensordot(Matrix, Tensor.transpose(Axes), axes=1).transpose(Axes)
     return Tensor
 
-def get_cell_parameters(sg):
+def get_cell_parameters(sg, sgsym = None):
         """
             Returns the general cell parameters for a lattice of given space group number sg.
         """
@@ -218,44 +229,61 @@ def get_cell_parameters(sg):
                                                  unbounded=False)
         
         if sg in range(1,3): 
-            print "Triclinic"
+            system = "Triclinic"
         elif sg in range(3,16):
-            alpha=sp.S("pi/2")
-            gamma=sp.S("pi/2")
-            print "Monoclinic"
+            if isinstance(sgsym, str):
+                trmat = get_ITA_settings(sg)[sgsym].split(",")
+                rightangles = [i for i in range(3) if "b" not in trmat[i]]
+            else:
+                rightangles = [0,2]
+            if 0 in rightangles: alpha=sp.S("pi/2")
+            else: unique = "a"
+            if 1 in rightangles: beta =sp.S("pi/2")
+            else: unique = "b"
+            if 2 in rightangles: gamma=sp.S("pi/2")
+            else: unique = "c"
+            system = "Monoclinic (unique axis %s)"%unique
         elif sg in range(16,75): 
             alpha=sp.S("pi/2")
             beta=sp.S("pi/2")
             gamma=sp.S("pi/2")
-            print "Orthorhombic"
+            system = "Orthorhombic"
         elif sg in range(75,143):
             b=a
             alpha=sp.S("pi/2")
             beta=sp.S("pi/2")
             gamma=sp.S("pi/2")
-            print "Tetragonal"
+            system = "Tetragonal"
         elif sg in range(143,168):
             b=a
-            alpha=sp.S("pi/2")
-            beta=sp.S("pi/2")
-            gamma=sp.S("2/3*pi")
-            print "Trigonal (hexagonal setting)"
+            if isinstance(sgsym, str) and sgsym.endswith(":r"):
+                c = a
+                beta = alpha
+                gamma = alpha
+                system = "Trigonal (rhombohedral setting)"
+            else:
+                alpha=sp.S("pi/2")
+                beta=sp.S("pi/2")
+                gamma=sp.S("2/3*pi")
+                system = "Trigonal (hexagonal setting)"
         elif sg in range(168,195):
             b=a
             alpha=sp.S("pi/2")
             beta=sp.S("pi/2")
             gamma=sp.S("2/3*pi")
-            print "Hexagonal"
+            system = "Hexagonal"
         elif sg in range(195,231):
             b=a
             c=a
             alpha=sp.S("pi/2")
             beta=sp.S("pi/2")
             gamma=sp.S("pi/2")
-            print "Cubic"
-        else: raise ValueError(
-                    "Invalid Space Group Number. Has to be in range(1,231).")
-        return a, b, c, alpha, beta, gamma
+            system = "Cubic"
+        else: 
+            raise ValueError(
+                "Invalid Space Group Number. Has to be in range(1,231).")
+        print system
+        return a, b, c, alpha, beta, gamma, system
 
 def get_rec_cell_parameters(a, b, c, alpha, beta, gamma):
     import sympy as sp
@@ -303,7 +331,7 @@ def get_rec_cell_parameters(a, b, c, alpha, beta, gamma):
     
     return (ar, br, cr, alphar, betar, gammar, B, B_0, G, G_r)
 
-def calc_f0(element, q, database = pyxrr.DB_PATH): # q is 2 sin(theta)/lambda
+def calc_f0(element, q, database = f0PATH): # q is 2 sin(theta)/lambda
     """
         Calculates the nonresonant scattering factor for elements and common ions
         in the range of sin(theta)/lambda < 2.0 per Angstrom.

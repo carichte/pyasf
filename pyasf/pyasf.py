@@ -13,7 +13,6 @@ import itertools
 import copy
 import sympy as sp
 import numpy as np
-import pyxrr.functions as pf
 import CifFile
 import difflib
 from time import time
@@ -34,6 +33,7 @@ import elements
 dictcall = lambda self, d: self.__call__(*[d[k] for k in self.kw])
 
 
+
 def makefunc(expr, mathmodule = "numpy"):
     symbols = filter(lambda x: x.is_Symbol, expr.atoms())
     symbols.sort(key=str)
@@ -43,6 +43,13 @@ def makefunc(expr, mathmodule = "numpy"):
     func.dictcall = types.MethodType(dictcall, func)
     func.__doc__ = str(expr)
     return func
+
+
+def mkfloat(string):
+    i = string.find("(")
+    if i>=0:
+        string = string[:i]
+    return float(string)
 
 def applymethod(Arr, Method, *args):
     for ele in np.nditer(Arr, flags=["refs_ok"], op_flags=['readwrite']):
@@ -114,79 +121,57 @@ class unit_cell(object):
                             or
                                 - path to .cif-file
         """
-        
-        if str(structure).isdigit():
-            sg_num = int(structure)
-            self.cif = False
-        elif os.path.isfile(structure) and \
-             os.path.splitext(structure)[1].lower()=="cif":
-            try:
-                CifFile.ReadCif(path)
-                self.cif = cf.first_block()
-            except Exception as e:
-                print("File doesn't seem to be a valid .cif file: %s"%path)
-                raise IOError(e)
-            try:
-                sg_num = int(self.cif["_symmetry_int_tables_number"])
-            except Exception as errmsg:
-                raise ValueError("space group number could not be determined from .cif file `%s`:\n%s"%(structure, errmsg))
-            ITA = get_ITA_settings(sg_num)
-            if len(ITA)>1:
-                print("Multiple settings found in space group %i"%sg_num)
-                if self.cif.has_key("_symmetry_space_group_name_h-m"):
-                    sg_sym = self.cif["_symmetry_space_group_name_h-m"]
-                    sg_sym = "".join(sg_sym.split()).lower()
-                    settings = ITA.keys()
-                    ratios = [difflib.SequenceMatcher(a=sg_sym, b=set).ratio() for set in settings.keys()]
-                    setting = settings[np.argmax(ratios)]
-                    print("  Identified symbol `%s' from .cif entry `%s'"\
-                          %(setting, sg_sym))
-                    sg_sym = setting
-                    
-        else:
-            raise IOError("Invalid input for structure. Has to be either space group number or path to .cif-file")
-            
+        self.sg_sym = None
+        self.symmetries = {}
         self.AU_positions = {} # only asymmetric unit
         self.AU_formfactors = {} # only asymmetric unit, isotropic
         self.AU_formfactorsDD = {} # only asymmetric unit, pure dipolar
         self.AU_formfactorsDQ = {} # only asymmetric unit, dipolar-quadrupolar interference
-        self.symmetries = {}
-        self.sg_num = sg_num
-        self.generators=get_generators(sg_num) # fetch the space group generators
-        
-        metrik = get_cell_parameters(sg_num)
-        self.a, self.b, self.c, self.alpha, self.beta, self.gamma = metrik
-        recparam = get_rec_cell_parameters(self.a, self.b, self.c, self.alpha, self.beta, self.gamma)
-        self.ar, self.br, self.cr = recparam[:3] # reciprocal lattice parameters
-        self.alphar, self.betar, self.gammar = recparam[3:6] # reciprocal lattice angles
-        self.B, self.B_0 = recparam[6:8] # transformation matrices
         self.miller = sp.symbols("h k l", integer=True)
-        self.G = sp.Matrix(self.miller)
-        self.Gc = self.B * self.G
-        self.Gc.simplify()
-        self.q = self.Gc.norm()
-        self.qfunc = makefunc(self.q, sp)
-        
-        self.metric_tensor, self.metric_tensor_inv = recparam[8:10] # metric tensors
-        
-        self.V = sp.sqrt(self.metric_tensor.det())
-        self.energy = sp.Symbol("epsilon", real=True)
         self.subs = {}
-        for s in self.miller + metrik:
-            if s.is_Symbol:
-                self.subs[s] = s
+        self.energy = sp.Symbol("epsilon", real=True)
+        self.subs.update(dict(zip(self.miller, self.miller)))
+        self.S = dict([(s.name, s) for s in self.miller]) # dictionary of all symbols
         self.elements = {}
         self.dE={}
-        self.S = dict([(s.name, s) for s in self.miller]) # dictionary of all symbols
         self.f0func = {}
         self.f0 = {}
         self.Etab = np.array([])
         self.occupancy = {}
         
-        if self.cif:
-            
+        if str(structure).isdigit():
+            self._init_lattice(int(structure))
+        elif len(structure)==2 and str(structure[0]).isdigit():
+            sg_num, self.sg_sym = structure
+            self._init_lattice(int(sg_num))
+        elif os.path.isfile(structure) and \
+             os.path.splitext(structure)[1].lower()==".cif":
             self.load_cif(structure, resonant, **kwargs)
+                    
+        else:
+            raise IOError("Invalid input for structure. Has to be either space group number or path to .cif-file")
+            
     
+    def _init_lattice(self, sg_num):
+        self.sg_num = sg_num
+        self.generators=get_generators(self.sg_num, self.sg_sym) # fetch the space group generators
+        if self.sg_sym!=None:
+            self.transform = transform = get_ITA_settings(self.sg_num)[self.sg_sym]
+        metrik = get_cell_parameters(self.sg_num, self.sg_sym)
+        self.a, self.b, self.c, self.alpha, self.beta, self.gamma, self.system = metrik
+        
+        recparam = get_rec_cell_parameters(*metrik[0:6])
+        self.ar, self.br, self.cr = recparam[:3] # reciprocal lattice parameters
+        self.alphar, self.betar, self.gammar = recparam[3:6] # reciprocal lattice angles
+        self.B, self.B_0 = recparam[6:8] # transformation matrices
+        self.G = sp.Matrix(self.miller)
+        self.Gc = self.B * self.G
+        self.Gc.simplify()
+        self.q = self.Gc.norm()
+        self.qfunc = makefunc(self.q, sp)
+        self.metric_tensor, self.metric_tensor_inv = recparam[8:10] # metric tensors
+        self.V = sp.sqrt(self.metric_tensor.det())
+        
     def add_atom(self, label, position, isotropic=True, assume_complex=True, dE=0, occupancy=1):
         """
             Method to fill the asymmetric unit with atoms.
@@ -280,71 +265,73 @@ class unit_cell(object):
             A list or string of resonant scattering atoms can be given.
             
         """
-        fobject = open(fname, "r")
-        lines = fobject.readlines()
-        fobject.close()
-        lines.reverse()
-        num_atom = 0
-        self.cifinfo = {}
-        def getcoord(atomline, col):
-            coord = atomline[col].partition(ord(40))[0]
+        try:
+            cf = CifFile.ReadCif(fname)
+            self.cif = cif = cf.first_block()
+        except Exception as e:
+            print("File doesn't seem to be a valid .cif file: %s"%fname)
+            raise IOError(e)
+        try:
+            sg_num = int(cif["_symmetry_int_tables_number"])
+        except Exception as errmsg:
+            raise ValueError("space group number could not be determined from .cif file `%s`:\n%s"%(structure, errmsg))
+        ITA = get_ITA_settings(sg_num)
+        if len(ITA)>1:
+            print("Multiple settings found in space group %i"%sg_num)
+            if cif.has_key("_symmetry_space_group_name_h-m"):
+                sg_sym = cif["_symmetry_space_group_name_h-m"]
+                sg_sym = "".join(sg_sym.split())
+                if sg_sym.endswith("S"):
+                    sg_sym = sg_sym[:-1] + ":1"
+                if sg_sym.endswith("Z"):
+                    sg_sym = sg_sym[:-1] + ":2"
+                    
+                settings = ITA.keys()
+                ratios = [difflib.SequenceMatcher(a=sg_sym, b=set).ratio() for set in settings]
+                setting = settings[np.argmax(ratios)]
+                print("  Identified symbol `%s' from .cif entry `%s'"\
+                      %(setting, sg_sym))
+                self.sg_sym = sg_sym = setting
+            
+        
+        def getcoord(cifline):
+            coord = mkfloat(cifline)
             coord = Fraction(coord)
             coord = coord.limit_denominator(max_denominator)
-        def getangle(line):
-            ang = line.split()[1].partition(ord(40))[0]
-            ang = float(ang) / 180
+            return coord
+        def getangle(cifline):
+            ang = mkfloat(cif[cifline])/180
             ang = Fraction("%.15f"%ang)
             ang = sp.S(ang.limit_denominator(max_denominator)) * sp.pi
-        while lines:
-            Line = lines.pop()
-            Line = Line.replace("\t", " ")
-            line = Line.lower()
-            #if self.DEBUG: print line
-            if line.startswith("_chemical_formula_sum"):
-                sumformula = line.partition(" ")[2].strip("'").strip()
-                self.cifinfo["SumFormula"] = sumformula
-            elif line.startswith("_cell_length_a"):
-                self.subs[self.a] = float(Line.split()[1].partition("(")[0]) #)
-            elif line.startswith("_cell_length_b"):
-                self.subs[self.b] = float(Line.split()[1].partition("(")[0]) #)
-            elif line.startswith("_cell_length_c"):
-                self.subs[self.c] = float(Line.split()[1].partition("(")[0]) #)
-            elif line.startswith("_cell_angle_alpha"):
-                self.subs[self.alpha] = getangle(Line)
-            elif line.startswith("_cell_angle_beta"):
-                self.subs[self.beta] = getangle(Line)
-            elif line.startswith("_cell_angle_gamma"):
-                self.subs[self.gamma] = getangle(Line)
-            elif line.startswith("_atom_site"):
-                if line.startswith("_atom_site_label"): col_label = num_atom
-                elif line.startswith("_atom_site_type_symbol"): col_symbol = num_atom
-                elif line.startswith("_atom_site_fract_x"): col_x = num_atom
-                elif line.startswith("_atom_site_fract_y"): col_y = num_atom
-                elif line.startswith("_atom_site_fract_z"): col_z = num_atom
-                elif line.startswith("_atom_site_occupancy"): col_occ = num_atom
-                num_atom+=1
-            elif num_atom>0 and len(Line.split())==num_atom and not line.startswith("#"):
-                atomline = Line.split()
-                label = atomline[col_label]
-                symbol = atomline[col_symbol]
-                if symbol[:2].isalpha():
-                    symbol = symbol[:2]
-                else:
-                    symbol = symbol[:1]
-                px = sp.S(getcoord(atomline, col_x))
-                py = sp.S(getcoord(atomline, col_y))
-                pz = sp.S(getcoord(atomline, col_z))
-                position = (px, py, pz)
-                isotropic = (symbol not in resonant)
-                if self.DEBUG:
-                    print label, symbol, position, isotropic
-                self.add_atom(label, position, isotropic, assume_complex=True)
+            return ang
         
+        self._init_lattice(sg_num)
         
+        self.cifinfo = {}
+        if cif.has_key("_chemical_formula_sum"):
+            self.cifinfo["SumFormula"] = cif["_chemical_formula_sum"]
+        self.subs[self.a] = mkfloat(self.cif["_cell_length_a"])
+        self.subs[self.b] = mkfloat(self.cif["_cell_length_b"])
+        self.subs[self.c] = mkfloat(self.cif["_cell_length_c"])
+        if self.alpha.is_Symbol:
+            self.subs[self.alpha] = getangle("_cell_angle_alpha")
+        if self.beta.is_Symbol:
+            self.subs[self.beta]  = getangle("_cell_angle_beta")
+        if self.gamma.is_Symbol:
+            self.subs[self.gamma] = getangle("_cell_angle_gamma")
+        
+        for line in cif.GetLoop("_atom_site_label"):
+            symbol = line._atom_site_type_symbol
+            symbol = filter(str.isalpha, symbol)
+            label = line._atom_site_label
+            px = sp.S(line._atom_site_fract_x)
+            py = sp.S(line._atom_site_fract_y)
+            pz = sp.S(line._atom_site_fract_z)
+            occ = mkfloat(line._atom_site_occupancy)
+            position = (px, py, pz)
+            isotropic = (symbol not in resonant)
+            self.add_atom(label, position, isotropic, assume_complex=True, occupancy=occ)
     
-    def get_f0(element):
-        pass
-        
     
     def find_symmetry(self, start_sg=230):
         """
@@ -430,7 +417,7 @@ class unit_cell(object):
                 print self.AU_formfactorsDD[label], self.AU_formfactorsDQ[label]
     
     
-    def transform(self, generator, AU=False):
+    def _transform(self, generator, AU=False):
         """
             transform structure unit with a given generator.
         """
@@ -521,6 +508,7 @@ class unit_cell(object):
         """
             Calculates the density in g/cm^3 from the structure.
         """
+        import pyxrr.functions as pf
         assert hasattr(self, "positions"), \
             "Unable to find atom positions. Did you forget to perform the unit_cell.build_unit_cell() method?"
         self.species = np.unique(self.elements.values())
@@ -778,6 +766,7 @@ class unit_cell(object):
             If ``func_output`` is True, a function for the structure amplitude
             F(E) is returned. Otherwise, it's the Intensity array.
         """
+        import pyxrr.functions as pf
         self.f = dict({})
         if f1==None:
             f1=dict({})
@@ -878,6 +867,7 @@ class unit_cell(object):
         return self.E
     
     def eval_AAS(self, energy=None, table="Sasaki"):
+        import pyxrr.functions as pf
         if energy!=None:
             self.subs[self.energy] = energy
         else:
@@ -913,6 +903,7 @@ class unit_cell(object):
         
 
     def get_F0(self, miller=None, energy=None, resonant=True, table="Sasaki", equivalent=False):
+        import pyxrr.functions as pf
         if energy!=None:
             self.subs[self.energy] = energy
         else:
