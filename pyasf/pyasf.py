@@ -324,9 +324,9 @@ class unit_cell(object):
             symbol = line._atom_site_type_symbol
             symbol = filter(str.isalpha, symbol)
             label = line._atom_site_label
-            px = sp.S(line._atom_site_fract_x)
-            py = sp.S(line._atom_site_fract_y)
-            pz = sp.S(line._atom_site_fract_z)
+            px = sp.S(getcoord(line._atom_site_fract_x))
+            py = sp.S(getcoord(line._atom_site_fract_y))
+            pz = sp.S(getcoord(line._atom_site_fract_z))
             occ = mkfloat(line._atom_site_occupancy)
             position = (px, py, pz)
             isotropic = (symbol not in resonant)
@@ -508,7 +508,7 @@ class unit_cell(object):
         """
             Calculates the density in g/cm^3 from the structure.
         """
-        import pyxrr.functions as pf
+        import pyxrr.xray_interactions as xi
         assert hasattr(self, "positions"), \
             "Unable to find atom positions. Did you forget to perform the unit_cell.build_unit_cell() method?"
         self.species = np.unique(self.elements.values())
@@ -517,7 +517,7 @@ class unit_cell(object):
             self.amounts[self.elements[label]] += len(self.positions[label])
         
         
-        self.weights = dict([(atom, pf.get_element(atom)[1]) for atom in self.species])
+        self.weights = dict([(atom, xi.get_element(atom)[1]) for atom in self.species])
         div = gcd(*self.amounts.values())
         components = ["%s%i"%(item[0], item[1]/div) for item in self.amounts.iteritems()]
         components = map(lambda x: x[:-1] if (x[-1]=="1" and not x[-2].isdigit()) else x, components)
@@ -772,7 +772,7 @@ class unit_cell(object):
             If ``func_output`` is True, a function for the structure amplitude
             F(E) is returned. Otherwise, it's the Intensity array.
         """
-        import pyxrr.functions as pf
+        import pyxrr.xray_interactions as xi
         self.f = dict({})
         if f1==None:
             f1=dict({})
@@ -837,7 +837,7 @@ class unit_cell(object):
                         f1tab += Z
                     else:
                         # take dispersion correction from database
-                        f1tab, f2tab = pf.get_f1f2_from_db(element, energy - dE, table=table)
+                        f1tab, f2tab = xi.get_f1f2_from_db(element, energy - dE, table=table)
                     self.f1tab[element] = f1tab
                     self.f2tab[element] = f2tab
                     self.Etab = energy
@@ -873,7 +873,7 @@ class unit_cell(object):
         return self.E
     
     def eval_AAS(self, energy=None, table="Sasaki"):
-        import pyxrr.functions as pf
+        import pyxrr.xray_interactions as xi
         if energy!=None:
             self.subs[self.energy] = energy
         else:
@@ -889,9 +889,9 @@ class unit_cell(object):
             else:
                 dE = self.dE[label] # edge shift in eV
                 try:
-                    f_res = pf.get_f1f2_from_db(element, energy - dE, table=table)
+                    f_res = xi.get_f1f2_from_db(element, energy - dE, table=table)
                 except:
-                    f_res = pf.get_f1f2_from_db(element, energy - dE, table = "Henke")
+                    f_res = xi.get_f1f2_from_db(element, energy - dE, table = "Henke")
                 self.subs[ffsymbol] = sp.S(complex(f_res[0], f_res[1])) - Z + f0
 
         self.I = dict()
@@ -909,7 +909,7 @@ class unit_cell(object):
         
 
     def get_F0(self, miller=None, energy=None, resonant=True, table="Sasaki", equivalent=False):
-        import pyxrr.functions as pf
+        import pyxrr.xray_interactions as xi
         if energy!=None:
             self.subs[self.energy] = energy
         else:
@@ -940,9 +940,9 @@ class unit_cell(object):
             else:
                 dE = self.dE[label] # edge shift in eV
                 try:
-                    f_res = pf.get_f1f2_from_db(element, energy - dE, table=table)
+                    f_res = xi.get_f1f2_from_db(element, energy - dE, table=table)
                 except:
-                    f_res = pf.get_f1f2_from_db(element, energy - dE, table = "Henke")
+                    f_res = xi.get_f1f2_from_db(element, energy - dE, table = "Henke")
                 if resonant:
                     self.subs[ffsymbol] = sp.S(complex(f_res[0], f_res[1])) - Z + f0
                 else:
