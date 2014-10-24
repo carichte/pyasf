@@ -7,12 +7,14 @@ if len(sys.argv)<2:
 
 
 
-instpackage = ["pyasf", "CifFile"]
+instpackage = ["pyasf", "CifFile", "materials"]
 
 setup( name = "pyasf", 
        version = "0.1",
        packages = instpackage,
-       package_data = {"pyasf": ["space-groups.sqlite", "settings.txt", "f0_lowq.sqlite"]},
+       package_data = {
+            "pyasf": ["space-groups.sqlite", "settings.txt", "f0_lowq.sqlite"],
+            "materials": ["cif/*"]},
        author = "Carsten Richter",
        author_email = "carsten.richter@desy.de",
        description = "Software for symbolical calculation of the anisotropic tensor of susceptibility and the anisotropic structure factor (ASF).",

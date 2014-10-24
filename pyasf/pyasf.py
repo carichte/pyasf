@@ -46,6 +46,10 @@ def makefunc(expr, mathmodule = "numpy"):
 
 
 def mkfloat(string):
+    assert isinstance(string, str), "Invalid input. Need str."
+    string = string.strip()
+    if string == ".":
+        return 0
     i = string.find("(")
     if i>=0:
         string = string[:i]
@@ -133,7 +137,8 @@ class unit_cell(object):
         self.subs.update(dict(zip(self.miller, self.miller)))
         self.S = dict([(s.name, s) for s in self.miller]) # dictionary of all symbols
         self.elements = {}
-        self.dE={}
+        self.U = {} # dictionary of anisotropic mean square displacement
+        self.dE = {} # dictionary of edge shifts
         self.f0func = {}
         self.f0 = {}
         self.Etab = np.array([])
@@ -320,7 +325,10 @@ class unit_cell(object):
         if self.gamma.is_Symbol:
             self.subs[self.gamma] = getangle("_cell_angle_gamma")
         
-        for line in cif.GetLoop("_atom_site_label"):
+        if not cif.has_key("_atom_site_label"):
+            raise ValueError("No atoms found in .cif file")
+        loop = cif.GetLoop("_atom_site_label")
+        for line in loop:
             symbol = line._atom_site_type_symbol
             symbol = filter(str.isalpha, symbol)
             label = line._atom_site_label
@@ -330,7 +338,31 @@ class unit_cell(object):
             occ = mkfloat(line._atom_site_occupancy)
             position = (px, py, pz)
             isotropic = (symbol not in resonant)
+            if loop.has_key("_atom_site_U_iso_or_equiv"):
+                iso = mkfloat(line._atom_site_U_iso_or_equiv)
+            elif loop.has_key("_atom_site_B_iso_or_equiv"):
+                iso = mkfloat(line._atom_site_B_iso_or_equiv)
+                iso /= 8. * np.pi**2
+            else:
+                iso = 0
+            
+            self.U[label] = sp.eye(3) * iso
             self.add_atom(label, position, isotropic, assume_complex=True, occupancy=occ)
+        
+        if cif.has_key("_atom_site_aniso_label"):
+            loop = cif.GetLoop("_atom_site_aniso_label")
+            for num, line in enumerate(loop):
+                label = line._atom_site_aniso_label
+                for (i,j) in [(1,1), (1,2), (1,3), (2,2), (2,3), (3,3)]:
+                    kw_U = "_atom_site_aniso_U_%i%i"%(i,j)
+                    kw_B = "_atom_site_aniso_B_%i%i"%(i,j)
+                    if loop.has_key(kw_U):
+                        value = mkfloat(loop[kw_U][num])
+                    elif loop.has_key(kw_U):
+                        value = mkfloat(loop[kw_B][num])
+                        value /= 8. * np.pi**2
+                    self.U[label][i-1,j-1] = self.U[label][j-1,i-1] = value
+
     
     
     def find_symmetry(self, start_sg=230):
@@ -528,7 +560,7 @@ class unit_cell(object):
         self.density = self.u * self.total_weight/1000. / (self.V*1e-10**3) # density in g/cm^3
         return float(self.density.subs(self.subs).n())
     
-    def calc_structure_factor(self, miller=None, DD=True, DQ=True):
+    def calc_structure_factor(self, miller=None, DD=True, DQ=True, Temp=True):
         """
             Takes the three Miller-indices of Type int and calculates the Structure Factor in the reciprocal basis.
         """
@@ -538,27 +570,33 @@ class unit_cell(object):
         if not hasattr(self, "cell"):
             self.build_unit_cell()
         G = self.G.subs(self.subs)
+        Gc = self.Gc.subs(self.subs)
         self.F_0 = sp.S(0)
         self.F_DD = np.zeros((3,3), object)
         self.F_DQ = np.zeros((3,3,3), object)
         for Atom in self.positions.keys(): # get position, formfactor and symmetry if DQ tensor
+            if Temp:
+                Temp = float(Temp)
+                DW = sp.exp(-2*sp.pi**2 * Temp * Gc.dot(self.U[Atom].dot(Gc)))
+            else:
+                DW = 1
             if self.formfactors.has_key(Atom):
                 for i in range(len(self.formfactors[Atom])):
                     r = self.positions[Atom][i]
                     f = self.formfactors[Atom][i]
                     o = self.occupancy[Atom]
                     if self.DEBUG: print r, G.dot(r)
-                    self.F_0 += o * f * sp.exp(2*sp.pi*sp.I * G.dot(r))
+                    self.F_0 += o * f * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
             if self.formfactorsDD.has_key(Atom) and DD:
                 for i in range(len(self.formfactorsDD[Atom])):
                     r = self.positions[Atom][i]
                     f = self.formfactorsDD[Atom][i]
-                    self.F_DD += o * f * sp.exp(2*sp.pi*sp.I * G.dot(r))
+                    self.F_DD += o * f * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
             if self.formfactorsDQ.has_key(Atom) and DQ:
                 for i in range(len(self.formfactorsDQ[Atom])):
                     r = self.positions[Atom][i]
                     f = self.formfactorsDQ[Atom][i]
-                    self.F_DQ += o * f * sp.exp(2*sp.pi*sp.I * G.dot(r))
+                    self.F_DQ += o * f * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
         
         self.q = self.qfunc.dictcall(self.subs)
         self.d = 1/self.q
@@ -752,11 +790,12 @@ class unit_cell(object):
         #return self.E
     
     def DAFS(self, energy, miller=None, f1=None, f2=None, DD=False, DQ=False,
-             fwhm_ev=0, func_output=False, equivalent=False, table="Sasaki"):
+             fwhm_ev=0, func_output=False, equivalent=False, table="Sasaki",
+             Temp=True):
         """
             Calculates a Diffraction Anomalous Fine Structure (DAFS) curve for
-            a given array of energies and a certain Bragg reflection hkl specified 
-            by the miller indices 3-tuple.
+            a given array of energies and a certain Bragg reflection hkl
+            specified by the miller indices 3-tuple.
             The spectral fine structure of atoms is retrieved from a database
             specified in ``table``.
             Per default, dipole-dipole (DD) term as well as dipole-quadrupole
@@ -789,7 +828,7 @@ class unit_cell(object):
                     "Label %s not found in present unit cell"%key
             f2 = f2.copy()
         if (miller!=None and len(miller)==3) or not hasattr(self, "F_0"):
-            self.calc_structure_factor(miller, DD=DD, DQ=DQ)
+            self.calc_structure_factor(miller, DD=DD, DQ=DQ, Temp=Temp)
             self.transform_structure_factor(AAS=(DQ+DD))
             self.f0.clear()
         if not np.all(energy == self.Etab):
@@ -827,7 +866,7 @@ class unit_cell(object):
                     f1tab = self.f1tab[element]
                     f2tab = self.f2tab[element]
                 else:
-                    print("Fetching tabulated dispersion correction values for %s from %s"%(element, table))
+                    #print("Fetching tabulated dispersion correction values for %s from %s"%(element, table))
                     if table=="deltaf":
                         import deltaf
                         # here the dispersion correction is calculated
@@ -840,7 +879,7 @@ class unit_cell(object):
                         f1tab, f2tab = xi.get_f1f2_from_db(element, energy - dE, table=table)
                     self.f1tab[element] = f1tab
                     self.f2tab[element] = f2tab
-                    self.Etab = energy
+                    self.Etab = energy.copy()
                     #print("Done.")
                 if not f1.has_key(ffsymbol):
                     f1[ffsymbol] = f1tab
@@ -908,13 +947,14 @@ class unit_cell(object):
             self.I[pol] = makefunc(Intensity, "numpy")
         
 
-    def get_F0(self, miller=None, energy=None, resonant=True, table="Sasaki", equivalent=False):
+    def get_F0(self, miller=None, energy=None, resonant=True, table="Sasaki", 
+                     equivalent=False, Temp=False):
         import pyxrr.xray_interactions as xi
         if energy!=None:
             self.subs[self.energy] = energy
         else:
             energy = float(self.subs[self.energy])
-        self.calc_structure_factor(miller)
+        self.calc_structure_factor(miller, Temp=Temp)
         self.transform_structure_factor(AAS=False)
         
         done = []
@@ -971,7 +1011,7 @@ class unit_cell(object):
         psi2 = sp.Symbol("psi_2", real=True)
         self.S[psi2.name] = psi2
         
-        self.calc_structure_factor(orientation)
+        self.calc_structure_factor(orientation, Temp=False)
         self.transform_structure_factor(AAS=False)
         Q = self.Q
         Gc = self.Gc.subs(self.subs).normalized()
@@ -983,7 +1023,7 @@ class unit_cell(object):
         ref_d = sp.Matrix([0,0,1]) # Reference vector for psi=0
         ref_c = Q.T * ref_d
         ref_c.simplify()
-        self.calc_structure_factor(miller) # secondary reflection
+        self.calc_structure_factor(miller, Temp=False) # secondary reflection
         self.transform_structure_factor(AAS=False)
         Q2 = self.Q
         Q2.simplify()
