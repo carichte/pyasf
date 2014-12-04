@@ -3,6 +3,7 @@ import sympy as sp
 import urllib
 import cPickle as pickle
 import numpy as np
+import itertools
 DBPATH = os.path.join(os.path.dirname(__file__), "space-groups.sqlite")
 f0PATH = os.path.join(os.path.dirname(__file__), "f0_lowq.sqlite")
 SETTPATH = os.path.join(os.path.dirname(__file__), "settings.txt")
@@ -73,7 +74,8 @@ def fetch_ITA_generators(sgnum, trmat=None):
     generators=[]
     genlist = list(table)
     if table.find("tbody") != None:
-        genlist += list(table.find("tbody"))
+        for tbody in table.findall("tbody"):
+            genlist.extend(list(tbody))
     for tr in genlist:
         if not isinstance(tr[0].text, str) or not tr[0].text.isdigit():
             continue
@@ -200,33 +202,47 @@ def stay_in_UC(coordinate):
 def hassymb(x):
     return [i.is_Symbol for i in x.atoms()].count(True) > 0
 
-def full_transform(Matrix, Tensor):
+def full_transform_old(Matrix, Tensor):
     """
         Transforms the Tensor to Representation in new Basis with given Transformation Matrix.
     """
     import numpy
-    for i in range(len(Tensor.shape)):
-        Axes = range(len(Tensor.shape))
+    for i in xrange(Tensor.ndim):
+        Axes = range(Tensor.ndim)
         Axes[0] = i
         Axes[i] = 0
         Tensor = numpy.tensordot(Matrix, Tensor.transpose(Axes), axes=1).transpose(Axes)
     return Tensor
+
+def full_transform2(Matrix, Tensor):
+    """
+        Transforms the Tensor to Representation in new Basis with given Transformation Matrix.
+    """
+    for i in xrange(Tensor.ndim):
+        Tensor = np.tensordot(Tensor, Matrix, axes=(0,0))
+    return Tensor
+
+def full_transform(Matrix, Tensor):
+    """
+        Transforms the Tensor to Representation in new Basis with given Transformation Matrix.
+    """
+    Matrix = np.array(Matrix)
+    Tensor = np.array(Tensor)
+    dtype = np.find_common_type([],[Matrix.dtype, Tensor.dtype])
+    Tnew = np.zeros_like(Tensor, dtype = dtype)
+    for ind in itertools.product(*map(range, Tensor.shape)):
+        for inds in itertools.product(*map(range, Tensor.shape)):
+            Tnew[ind] += Tensor[inds] * Matrix[inds, ind].prod()
+            #print Matrix[inds, ind], Tnew
+    return Tnew
+
 
 def get_cell_parameters(sg, sgsym = None):
         """
             Returns the general cell parameters for a lattice of given space group number sg.
         """
         import sympy as sp
-        a, b, c, alpha, beta, gamma = sp.symbols("a, b, c, alpha, beta, gamma",
-                                                 commutative=True,
-                                                 complex=True,
-                                                 imaginary=False,
-                                                 negative=False,
-                                                 nonnegative=True,
-                                                 real=True,
-                                                 bounded=True,
-                                                 positive=True,
-                                                 unbounded=False)
+        a, b, c, alpha, beta, gamma = sp.symbols("a, b, c, alpha, beta, gamma")
         
         if sg in range(1,3): 
             system = "Triclinic"
@@ -299,37 +315,42 @@ def get_rec_cell_parameters(a, b, c, alpha, beta, gamma):
                    [a*c*sp.cos(beta),  b*c*sp.cos(alpha), c**2]])
     
     G_r = G.inv() # reciprocal Metric
+    G_r.simplify()
     
     # volume of crystall system cell in carthesian system
     # V = sp.sqrt(G.det())
     
-    # cell vectors in carthesian system in reciprocal space
-    #ar_vector = 2*sp.pi* cross(b_vector, c_vector) / V
-    #br_vector = 2*sp.pi* cross(c_vector, a_vector) / V
-    #cr_vector = 2*sp.pi* cross(a_vector, b_vector) / V
     
     # reciprocal cell lengths
     ar = sp.sqrt(G_r[0,0])
     br = sp.sqrt(G_r[1,1])
     cr = sp.sqrt(G_r[2,2])
     
-    alphar = sp.acos(G_r[1,2]/(br*cr))
-    betar = sp.acos(G_r[0,2]/(ar*cr))
-    gammar = sp.acos(G_r[0,1]/(ar*br))
+    #alphar = sp.acos(G_r[1,2]/(br*cr)).simplify()
+    alphar = sp.acos((-sp.cos(alpha) + sp.cos(beta)*sp.cos(gamma))/(sp.Abs(sp.sin(beta))*sp.Abs(sp.sin(gamma))))
+    betar  = sp.acos(G_r[0,2]/(ar*cr))
+    #gammar = sp.acos(G_r[0,1]/(ar*br)).simplify()
+    gammar = sp.acos((sp.cos(alpha)*sp.cos(beta) - sp.cos(gamma))/(sp.Abs(sp.sin(alpha))*sp.Abs(sp.sin(beta))))
     
-    B =   sp.Matrix([[ar, br*sp.cos(gammar),  cr*sp.cos(betar)],
-                     [0,  br*sp.sin(gammar), -cr*sp.sin(betar)*sp.cos(alpha)],
-                     [0,  0,                  1/c]])
+    # x parallel to a* and z parallel to a* x b*   (ITC Vol B Ch. 3.3.1.1.1)
+    #B =   sp.Matrix([[ar, br*sp.cos(gammar),  cr*sp.cos(betar)],
+    #                 [0,  br*sp.sin(gammar), -cr*sp.sin(betar)*sp.cos(alpha)],
+    #                 [0,  0,                  1/c]])
+    #B_0 = sp.Matrix([[1,  sp.cos(gammar),  sp.cos(betar)],
+    #                 [0,  sp.sin(gammar), -sp.sin(betar)*sp.cos(alpha)],
+    #                 [0,  0,               1]])
     #V_0 = sp.sqrt(1 - sp.cos(alphar)**2 - sp.cos(betar)**2 - sp.cos(gammar)**2 + 2*sp.cos(alphar)*sp.cos(betar)*sp.cos(gammar))
-    #print V_0
     
-    B_0 = sp.Matrix([[1,  sp.cos(gammar),     sp.cos(betar)],
-                     [0,  sp.sin(gammar),    -sp.sin(betar)*sp.cos(alpha)],
-                     [0,  0,                  1]])
+    # x parallel to a and z parallel to a x b   (ITC Vol B Ch. 3.3.1.1.1)
+    V0 = sp.sin(alpha) * sp.sin(beta) * sp.sin(gammar)
+    M = sp.Matrix([[a, b*sp.cos(gamma),  c*sp.cos(beta)],
+                   [0, b*sp.sin(gamma),  c*(sp.cos(alpha) - sp.cos(beta)*sp.cos(gamma))/sp.sin(gamma)],
+                   [0,               0,  c*V0/sp.sin(gamma)]])
+    Mi = sp.Matrix([[1/a,-1/(a*sp.tan(gamma)),  (sp.cos(alpha)*sp.cos(gamma) - sp.cos(beta))/(a*V0*sp.sin(gamma))],
+                    [0,   1/(b*sp.sin(gamma)),  (sp.cos(beta)*sp.cos(gamma) - sp.cos(alpha))/(b*V0*sp.sin(gamma))],
+                    [0,   0,                     sp.sin(gamma)/(c*V0)]])
     
-    
-    
-    return (ar, br, cr, alphar, betar, gammar, B, B_0, G, G_r)
+    return (ar, br, cr, alphar, betar, gammar, M, Mi, G, G_r)
 
 def calc_f0(element, q, database = f0PATH): # q is 2 sin(theta)/lambda
     """

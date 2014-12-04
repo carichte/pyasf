@@ -15,6 +15,7 @@ import sympy as sp
 import numpy as np
 import CifFile
 import difflib
+import collections
 from time import time
 from functions import *
 from fractions import Fraction
@@ -32,6 +33,11 @@ import elements
 """
 dictcall = lambda self, d: self.__call__(*[d[k] for k in self.kw])
 
+
+delta = sp.Symbol("delta")
+Rz = sp.Matrix([[sp.cos(delta), -sp.sin(delta), 0],
+                [sp.sin(delta),  sp.cos(delta), 0],
+                [            0,              0, 1]])
 
 
 def makefunc(expr, mathmodule = "numpy"):
@@ -137,7 +143,7 @@ class unit_cell(object):
         self.subs.update(dict(zip(self.miller, self.miller)))
         self.S = dict([(s.name, s) for s in self.miller]) # dictionary of all symbols
         self.elements = {}
-        self.U = {} # dictionary of anisotropic mean square displacement
+        self.U = collections.defaultdict(lambda: sp.zeros(3)) # dictionary of anisotropic mean square displacement
         self.dE = {} # dictionary of edge shifts
         self.f0func = {}
         self.f0 = {}
@@ -168,13 +174,22 @@ class unit_cell(object):
         recparam = get_rec_cell_parameters(*metrik[0:6])
         self.ar, self.br, self.cr = recparam[:3] # reciprocal lattice parameters
         self.alphar, self.betar, self.gammar = recparam[3:6] # reciprocal lattice angles
-        self.B, self.B_0 = recparam[6:8] # transformation matrices
+        self.M, self.Minv = recparam[6:8] # transformation matrices
+        dsub = {self.a:1, self.b:1, self.c:1}
+        self.M0 = self.M.subs(dsub)
+        self.M0inv = self.Minv.subs(dsub)
+        self.metric_tensor, self.metric_tensor_inv = recparam[8:10] # metric tensors
+        self.metric_tensor_0 = self.metric_tensor.subs(dsub)
+        self.metric_tensor_inv_0 = self.metric_tensor_inv.subs(dsub)
         self.G = sp.Matrix(self.miller)
-        self.Gc = self.B * self.G
+        # G is a vector in reciprocal space -> dual space
+        # To transform it to cartesian space:
+        # Gc = M * metric_tensor_inv * G
+        #    = Minv.T * G 
+        self.Gc = self.Minv.T * self.G
         self.Gc.simplify()
         self.q = self.Gc.norm()
         self.qfunc = makefunc(self.q, sp)
-        self.metric_tensor, self.metric_tensor_inv = recparam[8:10] # metric tensors
         self.V = sp.sqrt(self.metric_tensor.det())
         
     def add_atom(self, label, position, isotropic=True, assume_complex=True, dE=0, occupancy=1):
@@ -236,28 +251,46 @@ class unit_cell(object):
             Sym = sp.Symbol("f_" + label + "_0", real=True)
             self.S[Sym.name] = Sym
             self.AU_formfactors[label] = Sym
-            self.AU_formfactorsDD[label] = np.zeros((3,3), dtype=object)
+            f_DD = np.zeros((3,3), dtype=object)
             ind = range(3)
             for i,j in itertools.product(ind, ind):
                 if i<=j: 
                     Sym = sp.Symbol("f_%s_dd_%i%i"%(label, i+1, j+1), **my_ff_args)
                     self.S[Sym.name] = Sym
-                    self.AU_formfactorsDD[label][i,j] = Sym
+                    f_DD[i,j] = Sym
                     if i<j:
-                        self.AU_formfactorsDD[label][j,i] = Sym
-            self.AU_formfactorsDQ[label] = np.zeros((3,3,3), dtype=object)
+                        f_DD[j,i] = Sym
+            applymethod(f_DD, "simplify")
+            
+            ######### Transformation to lattice units:
+            # M transforms vector from crystal units in direct space 
+            # to the cartesian system. Minv does the opposite.
+            # M0 transforms the tensor from cartesian system to direct
+            # crystal units allowing us to apply symmetry from ITC:
+            self.AU_formfactorsDD[label] = full_transform(self.M0, f_DD)
+            # transformation to lattice units:
+            #self.AU_formfactorsDD[label] = full_transform(self.B_0.inv().T, f_DD)
+
+            f_DQ = np.zeros((3,3,3), dtype=object)
             kindices=("x", "y", "z")
             for h,i,j in itertools.product(ind, ind, ind):
                 if j<=h:
                     Sym = sp.Symbol("f_%s_dq_%s%i%i"%(label, kindices[h], i+1, j+1), **my_ff_args)
                     self.S[Sym.name] = Sym
-                    self.AU_formfactorsDQ[label][h,i,j] = Sym
+                    f_DQ[h,i,j] = Sym
                     if j<h:
-                        self.AU_formfactorsDQ[label][j,i,h] = Sym 
+                        f_DQ[j,i,h] = Sym
                         # See eq. 12 in Kokubun et al. http://dx.doi.org/10.1103/PhysRevB.82.205206
+            applymethod(f_DQ, "simplify")
+            # transformation to lattice units:
+            self.AU_formfactorsDQ[label] = full_transform(self.M0, f_DQ)
+            #self.AU_formfactorsDQ[label] = full_transform(self.B_0, f_DQ)
+            # transformation to lattice units:
+            #self.AU_formfactorsDQ[label] = full_transform(self.B_0.inv().T, f_DQ)
             if self.DEBUG:
                 print(self.AU_formfactorsDD[label], self.AU_formfactorsDQ[label])
-        else: raise TypeError("Enter boolean argument for isotropic")
+        else:
+            raise TypeError("Enter boolean argument for isotropic")
     
     def load_cif(self, fname, resonant="", max_denominator=10000):
         """
@@ -290,9 +323,12 @@ class unit_cell(object):
                     sg_sym = sg_sym[:-1] + ":1"
                 if sg_sym.endswith("Z"):
                     sg_sym = sg_sym[:-1] + ":2"
+                if sg_sym[-1] in ["R", "H"] and ":" not in sg_sym:
+                    sg_sym = sg_sym[:-1] + ":" + sg_sym[-1]
                     
                 settings = ITA.keys()
-                ratios = [difflib.SequenceMatcher(a=sg_sym, b=set).ratio() for set in settings]
+                sg_sym = sg_sym.lower()
+                ratios = [difflib.SequenceMatcher(a=sg_sym, b=set.lower()).ratio() for set in settings]
                 setting = settings[np.argmax(ratios)]
                 print("  Identified symbol `%s' from .cif entry `%s'"\
                       %(setting, sg_sym))
@@ -356,10 +392,16 @@ class unit_cell(object):
                 for (i,j) in [(1,1), (1,2), (1,3), (2,2), (2,3), (3,3)]:
                     kw_U = "_atom_site_aniso_U_%i%i"%(i,j)
                     kw_B = "_atom_site_aniso_B_%i%i"%(i,j)
+                    kw_beta = "_atom_site_aniso_beta_%i%i"%(i,j)
                     if loop.has_key(kw_U):
                         value = mkfloat(loop[kw_U][num])
-                    elif loop.has_key(kw_U):
+                    elif loop.has_key(kw_B):
                         value = mkfloat(loop[kw_B][num])
+                        value /= 8. * np.pi**2
+                    elif loop.has_key(kw_beta):
+                        value = mkfloat(loop[kw_beta][num])
+                        value /= self.metric_tensor_inv[i-1,j-1] / 4.
+                        value = value.subs(self.subs)
                         value /= 8. * np.pi**2
                     self.U[label][i-1,j-1] = self.U[label][j-1,i-1] = value
 
@@ -417,21 +459,38 @@ class unit_cell(object):
             equations=[]
             for generator in self.generators:
                 W = np.array(generator[:,:3])
+                Wi = np.array(generator[:,:3].inv())
                 w = np.array(generator[:,3]).ravel()
                 if self.DEBUG: print w, W
-                new_position = full_transform(W, self.AU_positions[label]) + w
-                if self.DEBUG: print new_position
+                new_position = W.dot(self.AU_positions[label]) + w
                 new_position = np.array([stay_in_UC(i) for i in new_position])
+                if self.DEBUG: print new_position
                 #if (new_position == self.AU_positions[label]).all(): #1.8.13
-                if (new_position - self.AU_positions[label]).sum() < self.eps:
-                    new_formfactorDD = full_transform(W, self.AU_formfactorsDD[label])
-                    new_formfactorDQ = full_transform(W, self.AU_formfactorsDQ[label])
-                    for eq in (self.AU_formfactorsDD[label] - new_formfactorDD).ravel():
-                        if eq not in equations and hasattr(eq, "is_number") and not eq.is_number:
-                            equations.append(eq)
-                    for eq in (self.AU_formfactorsDQ[label] - new_formfactorDQ).ravel():
-                        if eq not in equations and hasattr(eq, "is_number") and not eq.is_number:
-                            equations.append(eq)
+                dist = ((new_position - self.AU_positions[label])**2).sum()
+                if dist < self.eps:
+                    # incident polarization is covariant 
+                    # -> first axis in DD
+                    # -> second axis in DQ
+                    
+                    fDD = self.AU_formfactorsDD[label]
+                    fDQ = self.AU_formfactorsDQ[label]
+                    #fDD = self.AU_formfactorsDD[label]
+                    #fDQ = self.AU_formfactorsDQ[label].transpose(1,0,2)
+                    
+                    #fDDc = np.tensordot(self.metric_tensor_0, fDD, (1,0))
+                    #fDQc = np.tensordot(self.metric_tensor_0, fDQ, (1,0))
+                    #fDD = np.tensordot(self.metric_tensor_0, fDD, (1,0))
+                    #fDQ = np.tensordot(self.metric_tensor_0, fDQ, (1,0))
+                    
+                    new_DD = full_transform(W, fDD)
+                    new_DQ = full_transform(W, fDQ)
+                    
+                    #new_DD = np.tensordot(self.metric_tensor_inv_0, new_DD, (1,0))
+                    #new_DQ = np.tensordot(self.metric_tensor_inv_0, new_DQ, (1,0))
+                    
+                    equations.append((fDD - new_DD).ravel())
+                    equations.append((fDQ - new_DQ).ravel())
+            equations = np.hstack(equations)
             if self.DEBUG:
                 print label, equations
             self.equations[label] = equations
@@ -439,12 +498,13 @@ class unit_cell(object):
             if not symmetries:
                 continue
             assert len(symmetries)==1, "Unusual length of result of sp.solve (>1)"
-            symmetries = symmetries[0]
-            self.symmetries[label]=symmetries
+            self.symmetries[label] = symmetries = symmetries[0]
             if self.DEBUG:
                 print symmetries
             applymethod(self.AU_formfactorsDD[label], "subs", symmetries)
+            applymethod(self.AU_formfactorsDD[label], "simplify")
             applymethod(self.AU_formfactorsDQ[label], "subs", symmetries)
+            applymethod(self.AU_formfactorsDQ[label], "simplify")
             if self.DEBUG:
                 print self.AU_formfactorsDD[label], self.AU_formfactorsDQ[label]
     
@@ -465,18 +525,21 @@ class unit_cell(object):
             generator = np.array(generator).T
         if np.shape(generator)==(3, 4):
             W = np.array(generator[:,:3])
+            W = np.array(generator[:,:3].inv())
             w = np.ravel(generator[:,3])
         elif np.shape(generator)==(3, 3):
             W = np.array(generator[:,:3])
+            Wi = np.array(generator[:,:3].inv())
             w = np.zeros(3)
         elif len(np.ravel(generator))==3:
             W = np.diag((1,1,1))
+            Wi = np.diag((1,1,1))
             w = np.ravel(generator)
         else:
             return
         for name in positions.keys():
             if AU:
-                new_position = full_transform(W, positions[name]) + w
+                new_position = W.dot(positions[name]) + w
                 new_position = new_position%1
                 positions[name] = new_position
                 if formfactorsDD.has_key(name):
@@ -485,7 +548,7 @@ class unit_cell(object):
                     formfactorsDQ[name] = full_transform(W, formfactorsDQ[name])
             else:
                 for i in range(len(positions[name])):
-                    new_position = full_transform(W, positions[name][i]) + w
+                    new_position = W.cot(positions[name][i]) + w
                     new_position = new_position%1
                     positions[name][i] = new_position
                     if formfactorsDD.has_key(name):
@@ -512,9 +575,10 @@ class unit_cell(object):
                 self.formfactorsDQ[name]=[]
             for generator in self.generators:
                 W = np.array(generator[:,:3])
+                Wi = np.array(generator[:,:3].inv())
                 w = np.array(generator[:,3]).ravel()
                 #print W, self.AU_positions[name], w
-                new_position = full_transform(W, self.AU_positions[name]) + w
+                new_position = W.dot(self.AU_positions[name]) + w
                 new_position = np.array([stay_in_UC(i) for i in new_position])
                 if len(self.positions[name])>0: 
                     ind = ((new_position - np.array(self.positions[name]))**2).sum(1)
@@ -574,17 +638,17 @@ class unit_cell(object):
         self.F_0 = sp.S(0)
         self.F_DD = np.zeros((3,3), object)
         self.F_DQ = np.zeros((3,3,3), object)
-        for Atom in self.positions.keys(): # get position, formfactor and symmetry if DQ tensor
+        for Atom in self.positions: # get position, formfactor and symmetry if DQ tensor
             if Temp:
                 Temp = float(Temp)
                 DW = sp.exp(-2*sp.pi**2 * Temp * Gc.dot(self.U[Atom].dot(Gc)))
             else:
                 DW = 1
+            o = self.occupancy[Atom]
             if self.formfactors.has_key(Atom):
                 for i in range(len(self.formfactors[Atom])):
                     r = self.positions[Atom][i]
                     f = self.formfactors[Atom][i]
-                    o = self.occupancy[Atom]
                     if self.DEBUG: print r, G.dot(r)
                     self.F_0 += o * f * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
             if self.formfactorsDD.has_key(Atom) and DD:
@@ -608,19 +672,6 @@ class unit_cell(object):
         if DQ:
             self.F_DQ = ArraySimp2(self.F_DQ)
         
-        
-    def add_equivalent_SF(self, symop):
-        """
-            Applies Site Symmetries of the Space Group to the Structure Tensor.
-        """
-        W = np.array(symop)
-        #print (W, self.formfactorsDD[name])
-        new_F_DD = full_transform(W, self.F_DD).copy()
-        new_F_DQ = full_transform(W, self.F_DQ).copy()
-        self.F_DD += new_F_DD
-        self.F_DQ += new_F_DQ
-
-    
     def hkl(self):
         return tuple(self.subs[ind] for ind in self.miller)
     
@@ -636,16 +687,13 @@ class unit_cell(object):
            (AAS and (not hasattr(self, "F_DD") or not hasattr(self, "F_DQ"))):
             raise ValueError("No Reflection initialized. "
                              " Run self.calc_structure_factor() first.")
-        if AAS:
-            B_inv_T = np.array(self.B.T.inv())
-            B_0_inv_T = np.array(self.B_0.T.inv())
         # now the structure factors in a cartesian system follow
         self.Fc_0 = self.F_0
-        # self.Fc_DD = full_transform(B_inv_T, self.F_DD) #rethink that :-/
-        # self.Fc_DQ = full_transform(B_inv_T, self.F_DQ)
         if AAS:
-            self.Fc_DD = full_transform(B_0_inv_T, self.F_DD)
-            self.Fc_DQ = full_transform(B_0_inv_T, self.F_DQ)
+            #self.Fc_DD = full_transform(B_0_inv, self.F_DD) # RLU
+            #self.Fc_DQ = full_transform(B_0_inv, self.F_DQ) # RLU
+            self.Fc_DD = full_transform(self.M0inv, self.F_DD)
+            self.Fc_DQ = full_transform(self.M0inv, self.F_DQ)
         
         # and now: the rotation into the diffractometer system 
         #       (means rotation G into xd-direction)
@@ -678,20 +726,21 @@ class unit_cell(object):
                              [-sp.sin(xi), 0, sp.cos(xi)]])
         
         # combined rotation
-        self.Q = np.dot(self.Xi, self.Phi)
+        self.Q = self.Xi.dot(self.Phi)
+        #self.Q = np.dot(self.Phi, self.Xi)
         if subs:
             applymethod(self.Q, "subs", self.subs)
-            applymethod(self.Q, "n")
+            #applymethod(self.Q, "n")
         if simplify:
             applymethod(self.Q, "simplify")
             if AAS:
                 self.Fc_DD = ArraySimp1(self.Fc_DD)
                 self.Fc_DQ = ArraySimp1(self.Fc_DQ)
-
+        
         self.Fd_0 = self.Fc_0
         if AAS:
-            self.Fd_DD = full_transform(self.Q, self.Fc_DD)
-            self.Fd_DQ = full_transform(self.Q, self.Fc_DQ)
+            self.Fd_DD = full_transform(self.Q.T, self.Fc_DD)
+            self.Fd_DQ = full_transform(self.Q.T, self.Fc_DQ)
         self.Q = sp.Matrix(self.Q)
         self.Gd = self.Q * Gc
         
@@ -700,7 +749,7 @@ class unit_cell(object):
         miller = sp.Matrix(miller)
         if not hasattr(self, "Q"):
             self.transform_structure_factor()
-        UB = self.Q * self.B
+        UB = self.Q * self.M * self.metric_tensor
         if psi!=0:
             Psi = np.array([[1, 0, 0], 
                            [0,sp.cos(psi),sp.sin(psi)], 
@@ -738,21 +787,18 @@ class unit_cell(object):
         #vec_k_s = k * np.array([sp.sin(theta), sp.cos(theta), 0]) #alt
         
         # introduce rotational matrix
-        Psi = np.array([[1, 0, 0], 
-                       [0,sp.cos(psi),sp.sin(psi)], 
-                       [0, -sp.sin(psi), sp.cos(psi)]])
+        self.Psi = Psi = np.array([[1,            0,           0], 
+                                   [0,  sp.cos(psi), sp.sin(psi)], 
+                                   [0, -sp.sin(psi), sp.cos(psi)]])
         self.Fd_psi_0 = self.Fd_0.simplify()
         if DD:
-            self.Fd_psi_DD = full_transform(Psi, self.Fd_DD)
+            self.Fd_psi_DD = full_transform(Psi.T, self.Fd_DD)
             if simplify:
                 applymethod(self.Fd_psi_DD, "simplify")
         if DQ:
-            self.Fd_psi_DQ = full_transform(Psi, self.Fd_DQ)
+            self.Fd_psi_DQ = full_transform(Psi.T, self.Fd_DQ)
             if simplify:
                 applymethod(self.Fd_psi_DQ, "simplify")
-        self.Gd_psi = sp.Matrix(Psi) * self.Gd
-        if self.DEBUG:
-            print self.Gd, self.Gd_psi
         
         # calculate symmetric and antisymmetric DQ Tensors
         if not assume_imag and DQ:
@@ -769,8 +815,6 @@ class unit_cell(object):
         if DQ:
             self.Fd += sp.I * self.q      * self.Fd_psi_DQs[0] \
                      + sp.I * self.k_plus * self.Fd_psi_DQa[1]
-        
-        #self.Fd = (np.eye(3) * self.Fd_psi_0 + self.Fd_psi_DD + sp.I*self.q*self.Fd_psi_DQs[0] + sp.I*self.k_plus*self.Fd_psi_DQa[1])
         
         #self.Fd_alt = ( np.eye(3) * self.Fd_psi_0 + self.Fd_psi_DD + sp.I*np.tensordot(self.Fd_psi_DQ, vec_k_i, axes=(0,0))
         #                         + sp.I*np.tensordot(self.Fd_psi_DQ.transpose(0,2,1).conjugate(), vec_k_s, axes=(0,0)) )
