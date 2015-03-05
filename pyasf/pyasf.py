@@ -20,6 +20,7 @@ from time import time
 from functions import *
 from fractions import Fraction
 from scipy.interpolate import interp1d
+from scipy import ndimage
 from sympy.utilities import lambdify
 import elements
 #mydict = dict({"Abs":abs})
@@ -43,7 +44,7 @@ Rz = sp.Matrix([[sp.cos(delta), -sp.sin(delta), 0],
 def makefunc(expr, mathmodule = "numpy"):
     symbols = filter(lambda x: x.is_Symbol, expr.atoms())
     symbols.sort(key=str)
-    func = lambdify(symbols, expr, mathmodule)
+    func = lambdify(symbols, expr, mathmodule, dummify=False)
     func.kw = symbols
     func.kwstr = map(lambda x: x.name, symbols)
     func.dictcall = types.MethodType(dictcall, func)
@@ -54,12 +55,15 @@ def makefunc(expr, mathmodule = "numpy"):
 def mkfloat(string):
     assert isinstance(string, str), "Invalid input. Need str."
     string = string.strip()
-    if string == ".":
-        return 0
+    string = string.replace(",", ".")
     i = string.find("(")
     if i>=0:
         string = string[:i]
-    return float(string)
+    try:
+        res = float(string)
+    except:
+        res = 0
+    return res
 
 def applymethod(Arr, Method, *args):
     for ele in np.nditer(Arr, flags=["refs_ok"], op_flags=['readwrite']):
@@ -106,6 +110,10 @@ class unit_cell(object):
     """
     eps = 10*np.finfo(np.float64).eps
     u = 1.660538921e-27 # atomic mass unit
+    electron_radius = 2.8179403e-15 # meters
+    avogadro = 6.022142e23
+    eV_A = 12398.42
+    
     DEBUG = False
     def __init__(self, structure, resonant="", **kwargs):
         """
@@ -145,9 +153,9 @@ class unit_cell(object):
         self.elements = {}
         self.U = collections.defaultdict(lambda: sp.zeros(3)) # dictionary of anisotropic mean square displacement
         self.dE = {} # dictionary of edge shifts
+        self.feff_func = {}
         self.f0func = {}
         self.f0 = {}
-        self.Etab = np.array([])
         self.occupancy = {}
         
         if str(structure).isdigit():
@@ -340,6 +348,7 @@ class unit_cell(object):
             coord = Fraction(coord)
             coord = coord.limit_denominator(max_denominator)
             return coord
+        
         def getangle(cifline):
             ang = mkfloat(cif[cifline])/180
             ang = Fraction("%.15f"%ang)
@@ -364,6 +373,8 @@ class unit_cell(object):
         if not cif.has_key("_atom_site_label"):
             raise ValueError("No atoms found in .cif file")
         loop = cif.GetLoop("_atom_site_label")
+        for key in loop.keys():
+            loop[key.lower()] = loop[key]
         for line in loop:
             symbol = line._atom_site_type_symbol
             symbol = filter(str.isalpha, symbol)
@@ -374,10 +385,10 @@ class unit_cell(object):
             occ = mkfloat(line._atom_site_occupancy)
             position = (px, py, pz)
             isotropic = (symbol not in resonant)
-            if loop.has_key("_atom_site_U_iso_or_equiv"):
-                iso = mkfloat(line._atom_site_U_iso_or_equiv)
-            elif loop.has_key("_atom_site_B_iso_or_equiv"):
-                iso = mkfloat(line._atom_site_B_iso_or_equiv)
+            if loop.has_key("_atom_site_u_iso_or_equiv"):
+                iso = mkfloat(line._atom_site_u_iso_or_equiv)
+            elif loop.has_key("_atom_site_b_iso_or_equiv"):
+                iso = mkfloat(line._atom_site_b_iso_or_equiv)
                 iso /= 8. * np.pi**2
             else:
                 iso = 0
@@ -387,11 +398,13 @@ class unit_cell(object):
         
         if cif.has_key("_atom_site_aniso_label"):
             loop = cif.GetLoop("_atom_site_aniso_label")
+            for key in loop.keys():
+                loop[key.lower()] = loop[key]
             for num, line in enumerate(loop):
                 label = line._atom_site_aniso_label
                 for (i,j) in [(1,1), (1,2), (1,3), (2,2), (2,3), (3,3)]:
-                    kw_U = "_atom_site_aniso_U_%i%i"%(i,j)
-                    kw_B = "_atom_site_aniso_B_%i%i"%(i,j)
+                    kw_U = "_atom_site_aniso_u_%i%i"%(i,j)
+                    kw_B = "_atom_site_aniso_b_%i%i"%(i,j)
                     kw_beta = "_atom_site_aniso_beta_%i%i"%(i,j)
                     if loop.has_key(kw_U):
                         value = mkfloat(loop[kw_U][num])
@@ -637,7 +650,8 @@ class unit_cell(object):
         Gc = self.Gc.subs(self.subs)
         self.F_0 = sp.S(0)
         self.F_DD = np.zeros((3,3), object)
-        self.F_DQ = np.zeros((3,3,3), object)
+        self.F_DQin = np.zeros((3,3,3), object)
+        self.F_DQou = np.zeros((3,3,3), object)
         for Atom in self.positions: # get position, formfactor and symmetry if DQ tensor
             if Temp:
                 Temp = float(Temp)
@@ -659,8 +673,10 @@ class unit_cell(object):
             if self.formfactorsDQ.has_key(Atom) and DQ:
                 for i in range(len(self.formfactorsDQ[Atom])):
                     r = self.positions[Atom][i]
-                    f = self.formfactorsDQ[Atom][i]
-                    self.F_DQ += o * f * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
+                    fin = self.formfactorsDQ[Atom][i]
+                    fou = -fin.transpose(0,2,1) # if no magnetism
+                    self.F_DQin += sp.I * o * fin * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
+                    self.F_DQou += sp.I * o * fou * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
         
         self.q = self.qfunc.dictcall(self.subs)
         self.d = 1/self.q
@@ -670,7 +686,8 @@ class unit_cell(object):
         if DD:
             self.F_DD = ArraySimp2(self.F_DD)
         if DQ:
-            self.F_DQ = ArraySimp2(self.F_DQ)
+            self.F_DQin = ArraySimp2(self.F_DQin)
+            self.F_DQou = ArraySimp2(self.F_DQou)
         
     def hkl(self):
         return tuple(self.subs[ind] for ind in self.miller)
@@ -680,11 +697,11 @@ class unit_cell(object):
             First transforms F to a real space, cartesian, crystal-fixed system ->Fc.
             Then transforms Fc to the diffractometer system, which is G along xd and sigma along zd ->Fd.
             
-            This happence according to the work reported in:
+            This happens according to the work reported in:
             Acta Cryst. (1991). A47, 180-195 [doi:10.1107/S010876739001159X]
         """
         if not hasattr(self, "F_0") or \
-           (AAS and (not hasattr(self, "F_DD") or not hasattr(self, "F_DQ"))):
+           (AAS and (not hasattr(self, "F_DD") or not hasattr(self, "F_DQin"))):
             raise ValueError("No Reflection initialized. "
                              " Run self.calc_structure_factor() first.")
         # now the structure factors in a cartesian system follow
@@ -693,7 +710,8 @@ class unit_cell(object):
             #self.Fc_DD = full_transform(B_0_inv, self.F_DD) # RLU
             #self.Fc_DQ = full_transform(B_0_inv, self.F_DQ) # RLU
             self.Fc_DD = full_transform(self.M0inv, self.F_DD)
-            self.Fc_DQ = full_transform(self.M0inv, self.F_DQ)
+            self.Fc_DQin = full_transform(self.M0inv, self.F_DQin)
+            self.Fc_DQou = full_transform(self.M0inv, self.F_DQou)
         
         # and now: the rotation into the diffractometer system 
         #       (means rotation G into xd-direction)
@@ -735,12 +753,14 @@ class unit_cell(object):
             applymethod(self.Q, "simplify")
             if AAS:
                 self.Fc_DD = ArraySimp1(self.Fc_DD)
-                self.Fc_DQ = ArraySimp1(self.Fc_DQ)
+                self.Fc_DQin = ArraySimp1(self.Fc_DQin)
+                self.Fc_DQou = ArraySimp1(self.Fc_DQou)
         
         self.Fd_0 = self.Fc_0
         if AAS:
             self.Fd_DD = full_transform(self.Q.T, self.Fc_DD)
-            self.Fd_DQ = full_transform(self.Q.T, self.Fc_DQ)
+            self.Fd_DQin = full_transform(self.Q.T, self.Fc_DQin)
+            self.Fd_DQou = full_transform(self.Q.T, self.Fc_DQou)
         self.Q = sp.Matrix(self.Q)
         self.Gd = self.Q * Gc
         
@@ -770,54 +790,66 @@ class unit_cell(object):
         subs = dict(subs)
         return sp.N(self.theta.subs(self.subs).subs(subs) * 180/sp.pi)
     
-    def calc_scattered_amplitude(self, psi=None, assume_imag=True, 
+    def calc_scattered_amplitude(self, psi=None, assume_imag=False, assume_real=False,
                                        DD=True, DQ=True, simplify=True):
         if not hasattr(self, "Fd_0"):
             self.transform_structure_factor()
         if psi==None:
-            psi = sp.Symbol("psi", real=True)
+            self.psi = psi = sp.Symbol("psi", real=True)
             self.S[psi.name] = psi
         self.transform_structure_factor()
         sigma = sp.Matrix([0,0,1])
         k = self.energy / 12398.42
         self.k_plus = 2 * k * sp.cos(self.theta)
-        pi_i = sp.Matrix([sp.cos(self.theta), sp.sin(self.theta), 0])
+        pi_i = sp.Matrix([sp.cos(self.theta),  sp.sin(self.theta), 0])
         pi_s = sp.Matrix([sp.cos(self.theta), -sp.sin(self.theta), 0])
-        #vec_k_i = k * np.array([-sp.sin(theta), sp.cos(theta), 0]) #alt
-        #vec_k_s = k * np.array([sp.sin(theta), sp.cos(theta), 0]) #alt
+        
+        vec_k_i = k * sp.Matrix([-sp.sin(self.theta), sp.cos(self.theta), 0]) #alt
+        vec_k_s = k * sp.Matrix([ sp.sin(self.theta), sp.cos(self.theta), 0]) #alt
         
         # introduce rotational matrix
-        self.Psi = Psi = np.array([[1,            0,           0], 
-                                   [0,  sp.cos(psi), sp.sin(psi)], 
+        self.Psi = Psi = np.array([[1,            0,           0],
+                                   [0,  sp.cos(psi), sp.sin(psi)],
                                    [0, -sp.sin(psi), sp.cos(psi)]])
         self.Fd_psi_0 = self.Fd_0.simplify()
+        
         if DD:
             self.Fd_psi_DD = full_transform(Psi.T, self.Fd_DD)
             if simplify:
                 applymethod(self.Fd_psi_DD, "simplify")
         if DQ:
-            self.Fd_psi_DQ = full_transform(Psi.T, self.Fd_DQ)
+            self.Fd_psi_DQin = full_transform(Psi.T, self.Fd_DQin)
+            self.Fd_psi_DQou = full_transform(Psi.T, self.Fd_DQou)
             if simplify:
-                applymethod(self.Fd_psi_DQ, "simplify")
+                applymethod(self.Fd_psi_DQin, "simplify")
+                applymethod(self.Fd_psi_DQou, "simplify")
+        
         
         # calculate symmetric and antisymmetric DQ Tensors
-        if not assume_imag and DQ:
-            self.Fd_psi_DQs = (self.Fd_psi_DQ - self.Fd_psi_DQ.transpose(0,2,1).conjugate())/2.
-            self.Fd_psi_DQa = (self.Fd_psi_DQ + self.Fd_psi_DQ.transpose(0,2,1).conjugate())/2.
-        elif DQ:
-            self.Fd_psi_DQs = (self.Fd_psi_DQ + self.Fd_psi_DQ.transpose(0,2,1))/2.
-            self.Fd_psi_DQa = (self.Fd_psi_DQ - self.Fd_psi_DQ.transpose(0,2,1))/2.
+#        if DQ:
+#            self.Fd_psi_DQ_out = self.Fd_psi_DQ.copy().transpose(0,2,1)
+##            if assume_real:
+##                pass
+##            elif assume_imag:
+##                self.Fd_psi_DQ_out *= -1
+##            else:
+##                applymethod(self.Fd_psi_DQ_out, "conjugate") # only real parameters as in FDMNES!!!!?
+#            self.Fd_psi_DQs = (self.Fd_psi_DQ + self.Fd_psi_DQ_out)/2.
+#            self.Fd_psi_DQa = -(self.Fd_psi_DQ - self.Fd_psi_DQ_out)/2.
         
-
-        self.Fd = np.eye(3) * self.Fd_psi_0
-        if DD:
-            self.Fd += self.Fd_psi_DD
-        if DQ:
-            self.Fd += sp.I * self.q      * self.Fd_psi_DQs[0] \
-                     + sp.I * self.k_plus * self.Fd_psi_DQa[1]
-        
-        #self.Fd_alt = ( np.eye(3) * self.Fd_psi_0 + self.Fd_psi_DD + sp.I*np.tensordot(self.Fd_psi_DQ, vec_k_i, axes=(0,0))
-        #                         + sp.I*np.tensordot(self.Fd_psi_DQ.transpose(0,2,1).conjugate(), vec_k_s, axes=(0,0)) )
+#        
+#        self.Fd = np.eye(3) * self.Fd_psi_0
+#        if DD:
+#            self.Fd += self.Fd_psi_DD
+#        if DQ:
+#            self.Fd += sp.I * self.q      * self.Fd_psi_DQs[0] \
+#                     + sp.I * self.k_plus * self.Fd_psi_DQa[1]
+#       
+        # The Contraction:
+        self.Fd = np.eye(3) * self.Fd_psi_0 \
+                + self.Fd_psi_DD \
+                + np.tensordot(vec_k_i, self.Fd_psi_DQin, axes=(0,0)).squeeze() \
+                + np.tensordot(vec_k_s, self.Fd_psi_DQou, axes=(0,0)).squeeze()
         
         self.Fd = sp.Matrix(self.Fd)
         if simplify:
@@ -826,16 +858,121 @@ class unit_cell(object):
         
         
         self.E = {}
-        self.E["ss"] = (sigma.T * self.Fd * sigma)[0]
-        self.E["sp"] = (pi_s.T * self.Fd * sigma)[0]
+        self.E["ss"] = (sigma.T * self.Fd * sigma)[0] 
+        self.E["sp"] = (pi_s.T * self.Fd * sigma)[0] # Vertauscht in und sc?
         self.E["ps"] = (sigma.T * self.Fd * pi_i)[0]
         self.E["pp"] = (pi_s.T * self.Fd * pi_i)[0]
         
         #return self.E
     
+    
+    def get_f1f2_isotropic(self, energy, fwhm_ev=1e-4, table="Sasaki"):
+        isort = energy.argsort()
+        emin, emax = energy[isort[[0, -1]]]
+        atoms = list(self.positions)
+        if not hasattr(self, "_ftab") or \
+           not set(self._ftab.atoms).issuperset(atoms) or \
+           emin < self._ftab.x[0] or \
+           emax > self._ftab.x[-1]:
+            fwhm_ev = abs(fwhm_ev)
+            if table=="deltaf": # get resonant energies
+                import deltaf
+                newenergy = []
+                for label in atoms:
+                    element = self.elements[label]
+                    try:
+                        newenergy.append(deltaf.get_energies(
+                         element, emin, emax, fwhm_ev, verbose=False)[0])
+                    except:
+                        pass
+                newenergy = np.sort(np.hstack(newenergy))
+            else:
+                newenergy = np.arange(emin-25, emax+25)
+            ff_list = []
+            for label in atoms:
+                dE = self.dE[label]
+                element = self.elements[label]
+                Z = elements.Z[element]
+                if self.DEBUG:
+                    print("Fetching resonant dispersion corrections for %s "
+                          "from table `%s`."%(element, table))
+                if table=="deltaf":
+                    ff_list.append(deltaf.getfquad(element, newenergy - dE,
+                                                    fwhm_ev, f1f2="f1"))
+                    ff_list.append(deltaf.getfquad(element, newenergy - dE,
+                                                    fwhm_ev, f1f2="f2"))
+                else:
+                    import pyxrr.xray_interactions as xi
+                    f1, f2 = xi.get_f1f2_from_db(element, newenergy - dE,
+                                                               table=table)
+                    if fwhm_ev>0:
+                        f1 = ndimage.gaussian_filter1d(f1, fwhm_ev/2.355)
+                        f2 = ndimage.gaussian_filter1d(f2, fwhm_ev/2.355)
+                    ff_list.append(f1-Z)
+                    ff_list.append(f2)
+            self._ftab = interp1d(newenergy, ff_list, kind="linear")
+            self._ftab.atoms = atoms
+        
+        f1f2 = self._ftab(energy)
+        f = dict()
+        for i, atom in enumerate(self._ftab.atoms):
+            f[atom] = np.array(f1f2[2*i] + 1j*f1f2[2*i+1], dtype=complex)
+        
+        for atom in self.feff_func:
+            if atom in f:
+                func = self.feff_func[atom]
+                ind  = energy >= func.x.min()
+                ind *= energy <= func.x.max()
+                energy_sel = energy[ind]
+                f1f2 = self.feff_func[atom](energy_sel)
+                if f1f2.ndim==2:
+                    f1f2 = f1f2[0] + 1j*f1f2[1]
+                if hasattr(self, "fit_feff") and self.fit_feff:
+                    imin  = energy_sel.argmin()
+                    imax = energy_sel.argmax()
+                    emin, emax = energy_sel[imin], energy_sel[imax]
+                    fsmooth = f[atom][ind]
+                    # linear correction:
+                    lin = (fsmooth[imax]/f1f2[imax] - fsmooth[imin]/f1f2[imin]) / \
+                          (emax - emin) * (energy_sel - emin) + fsmooth[imin]/f1f2[imin]
+                    f1f2 *= lin
+                
+                f[atom][ind] = f1f2
+        
+        self.f1f2 = f
+        return f
+    
+    def get_absorption_isotropic(self, energy, density=None, table="Sasaki",
+                                       fwhm_ev=0.25, f1f2=None):
+        self.get_density()
+        if density==None:
+            density = float(self.density.subs(self.subs).n())
+        
+        if f1f2==None:
+            f1f2 = self.get_f1f2_isotropic(energy, table=table, fwhm_ev=fwhm_ev)
+        
+        index_refraction = complex(0)
+        
+        for label in f1f2:
+            element = self.elements[label]
+            Z = elements.Z[element]
+            
+            index_refraction += f1f2[label] * self.amounts[element] + Z
+            
+        
+        index_refraction *= self.electron_radius/(2*np.pi) \
+                         * (self.eV_A*1e-10/energy)**2 \
+                         * density * 1e6 * self.avogadro / self.total_weight
+        
+        self.index_of_refraction = index_refraction
+        
+        const = 10135467.657934014 # 2*eV/c/hbar
+        mu = index_refraction.imag * const * energy
+        return mu
+
+    
     def DAFS(self, energy, miller=None, f1=None, f2=None, DD=False, DQ=False,
-             fwhm_ev=0, func_output=False, equivalent=False, table="Sasaki",
-             Temp=True):
+             Temp=True, func_output=False, fwhm_ev=0.25, table="Sasaki"):
         """
             Calculates a Diffraction Anomalous Fine Structure (DAFS) curve for
             a given array of energies and a certain Bragg reflection hkl
@@ -855,83 +992,24 @@ class unit_cell(object):
             If ``func_output`` is True, a function for the structure amplitude
             F(E) is returned. Otherwise, it's the Intensity array.
         """
-        import pyxrr.xray_interactions as xi
-        self.f = dict({})
-        if f1==None:
-            f1=dict({})
-        else:
-            for key in f1.iterkeys():
-                assert key in self.AU_formfactors.keys(), \
-                    "Label %s not found in present unit cell"%key
-            f1 = f1.copy()
-        if f2==None:
-            f2=dict({})
-        else:
-            for key in f2.iterkeys():
-                assert key in self.AU_formfactors.keys(), \
-                    "Label %s not found in present unit cell"%key
-            f2 = f2.copy()
         if (miller!=None and len(miller)==3) or not hasattr(self, "F_0"):
             self.calc_structure_factor(miller, DD=DD, DQ=DQ, Temp=Temp)
             self.transform_structure_factor(AAS=(DQ+DD))
             self.f0.clear()
-        if not np.all(energy == self.Etab):
-            self.f1tab = {}
-            self.f2tab = {}
+        
+        f1f2 = self.get_f1f2_isotropic(energy, fwhm_ev, table)
+        
+        self.f = f = {}
+        
         for label in self.AU_formfactors:
             ffsymbol = self.AU_formfactors[label]
             element = self.elements[label]
-            
-            Z = elements.Z[element]
             
             if not self.f0.has_key(element):
                 if self.DEBUG: print("Calculating nonresonant scattering amplitude for %s"%element)
                 self.f0[element] = self.f0func[element].dictcall(self.subs)
             
-            if equivalent:
-                tmp = sp.Symbol("f_" + element)
-                self.subs[ffsymbol] = tmp - Z + self.f0[element]
-                ffsymbol = tmp
-                if self.f1tab.has_key(element) and self.f2tab.has_key(element):
-                    continue
-            else:
-                self.subs[ffsymbol] = ffsymbol - Z + self.f0[element]
-            
-            if f1.has_key(label):
-                f1[ffsymbol] = f1[label]
-                del f1[label]
-            if f2.has_key(label):
-                f2[ffsymbol] = f2[label]
-                del f2[label]
-            if not f1.has_key(ffsymbol) or not f2.has_key(ffsymbol):
-                # then take dispersion correction for isolated atom
-                dE = self.dE[label] # edge shift in eV
-                if self.f1tab.has_key(element) and self.f2tab.has_key(element):
-                    f1tab = self.f1tab[element]
-                    f2tab = self.f2tab[element]
-                else:
-                    #print("Fetching tabulated dispersion correction values for %s from %s"%(element, table))
-                    if table=="deltaf":
-                        import deltaf
-                        # here the dispersion correction is calculated
-                        #f1tab, f2tab = deltaf.getfquad(element, energy - self.dE[name], fwhm_ev)
-                        f1tab = deltaf.getfquad(element, energy - dE, fwhm_ev, f1f2="f1")
-                        f2tab = deltaf.getfquad(element, energy - dE, fwhm_ev, f1f2="f2")
-                        f1tab += Z
-                    else:
-                        # take dispersion correction from database
-                        f1tab, f2tab = xi.get_f1f2_from_db(element, energy - dE, table=table)
-                    self.f1tab[element] = f1tab
-                    self.f2tab[element] = f2tab
-                    self.Etab = energy.copy()
-                    #print("Done.")
-                if not f1.has_key(ffsymbol):
-                    f1[ffsymbol] = f1tab
-                if not f2.has_key(ffsymbol):
-                    f2[ffsymbol] = f2tab
-            #if self.subs.has_key(ffsymbol): self.subs.pop(ffsymbol)
-            #print ffsymbol, f1[ffsymbol].shape, f2[ffsymbol].shape
-            self.f[ffsymbol] = np.array(f1[ffsymbol] + 1j*f2[ffsymbol], dtype=complex)
+            f[ffsymbol] = f1f2[label] + float(self.f0[element])
         
         Feval = self.F_0.subs(self.subs).n()
         
@@ -940,7 +1018,8 @@ class unit_cell(object):
         if func_output:
             return F0_func
         else:
-            return abs(F0_func.dictcall(self.f))**2
+            return abs(F0_func.dictcall(f))**2
+    
     
     def simplify(self): # a longshot
         if not hasattr(self, "E"): return
