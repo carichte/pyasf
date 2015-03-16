@@ -705,7 +705,7 @@ class unit_cell(object):
             raise ValueError("No Reflection initialized. "
                              " Run self.calc_structure_factor() first.")
         # now the structure factors in a cartesian system follow
-        self.Fc_0 = self.F_0
+        self.Fc_0 = self.F_0.n().simplify()
         if AAS:
             #self.Fc_DD = full_transform(B_0_inv, self.F_DD) # RLU
             #self.Fc_DQ = full_transform(B_0_inv, self.F_DQ) # RLU
@@ -849,7 +849,8 @@ class unit_cell(object):
         self.Fd = np.eye(3) * self.Fd_psi_0 \
                 + self.Fd_psi_DD \
                 + np.tensordot(vec_k_i, self.Fd_psi_DQin, axes=(0,0)).squeeze() \
-                + np.tensordot(vec_k_s, self.Fd_psi_DQou, axes=(0,0)).squeeze()
+                - np.tensordot(vec_k_s, self.Fd_psi_DQou, axes=(0,0)).squeeze()
+                + np.tensordot(vec_k_s, self.Fd_psi_DQin.transpose(0,2,1), axes=(0,0)).squeeze()
         
         self.Fd = sp.Matrix(self.Fd)
         if simplify:

@@ -1,4 +1,5 @@
 import evaluationtools as et
+import pyasf
 sum_formula = "LiTaO3"
 density = 7.41
 # Expansion Coefficients (Citation: J. Appl. Phys. 40, 4637 (1969); doi: 10.1063/1.1657244)
