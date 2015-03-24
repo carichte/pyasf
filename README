@@ -10,11 +10,11 @@ Website: http://desy.de/~crichter/
 
 Requirements:
     - python 2
-    - gfortran for deltaf
     - Python Packages:
         - numpy
         - sympy
         - sqlite3
         - pickle
-
+    - the package rexs (https://github.com/carichte/rexs)
+        is recommended and necessary for DAFS evaluation
 
