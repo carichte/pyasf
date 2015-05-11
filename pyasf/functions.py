@@ -19,8 +19,8 @@ def get_ITA_settings(sgnum):
         print("Fetching ITA settings for space group %i"%sgnum)
         baseurl = "http://www.cryst.ehu.es/cgi-bin/cryst/programs/nph-getgen"
         params = urllib.urlencode({'gnum': sgnum, 'what':'gp', 'settings':'ITA Settings'})
-        result=urllib.urlopen(baseurl, params)
-        result=result.read()
+        result = urllib.urlopen(baseurl, params)
+        result = result.read()
         parser = etree.HTMLParser()
         tree = etree.fromstring(result, parser, base_url = baseurl)
         table = tree[1][3][6][0]

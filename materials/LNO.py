@@ -1,10 +1,10 @@
-import evaluationtools as et
+from rexs import tools
 sum_formula = "LiNbO3"
 density = 4.63
 SpaceGroup = 161
 
 # Expansion Coefficients (Citation: J. Appl. Phys. 40, 4637 (1969); doi: 10.1063/1.1657244)
-TExp = et.TempExpansion()
+TExp = tools.TempExpansion()
 TExp.alpha = ((1.44e-5, 1.54e-5, 0), (1.54e-5, 1.59e-5, 0), (0, 0, 0.75e-5))
 TExp.beta  = (( 7.1e-9,  5.3e-9, 0), (5.3e-9,   4.9e-9, 0), (0, 0, -7.7e-9))
 

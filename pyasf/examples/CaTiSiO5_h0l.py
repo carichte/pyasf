@@ -5,10 +5,9 @@ Outer Batch file for pyasf.py.
 Written by Carsten Richter (carsten.richter@desy.de)
 
 """
-import evaluationtools.materials.HPS as hps
+import materials.HPS as hps
 import itertools
 import pylab as pl
-import evaluationtools as et
 import pyasf
 import time
 mydict = dict({"Abs":abs})

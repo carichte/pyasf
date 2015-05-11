@@ -25,7 +25,7 @@ def get_cs(stack = None):
     import pyasf
     sp = pyasf.sp
     if stack==None:
-        cs = pyasf.unit_cell(ciffile)
+        cs = pyasf.unit_cell(ciffile, resonant="Ho")
     else:
         cs = pyasf.unit_cell(1)
         for i in range(len(stack)):

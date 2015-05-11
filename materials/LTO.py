@@ -1,9 +1,10 @@
-import evaluationtools as et
+from rexs import tools
 import pyasf
+
 sum_formula = "LiTaO3"
 density = 7.41
 # Expansion Coefficients (Citation: J. Appl. Phys. 40, 4637 (1969); doi: 10.1063/1.1657244)
-TExp = et.TempExpansion()
+TExp = tools.TempExpansion()
 TExp.alpha = ((1.61e-5, 1.62e-5, 0), (1.62e-5, 1.54e-5, 0), (0, 0, 0.22e-5))
 TExp.beta  = (( 7.5e-9,  5.9e-9, 0), (5.9e-9,   7.0e-9, 0), (0, 0, -5.9e-9))
 

@@ -13,9 +13,10 @@ import itertools
 import copy
 import sympy as sp
 import numpy as np
-import CifFile
 import difflib
 import collections
+import urllib2
+import CifFile
 from time import time
 from functions import *
 from fractions import Fraction
@@ -23,6 +24,7 @@ from scipy.interpolate import interp1d
 from scipy import ndimage
 from sympy.utilities import lambdify
 import elements
+import StringIO
 #mydict = dict({"Abs":abs})
 #epsilon=1.e-10
 
@@ -35,31 +37,53 @@ import elements
 dictcall = lambda self, d: self.__call__(*[d[k] for k in self.kw])
 
 
-delta = sp.Symbol("delta")
-Rz = sp.Matrix([[sp.cos(delta), -sp.sin(delta), 0],
-                [sp.sin(delta),  sp.cos(delta), 0],
-                [            0,              0, 1]])
+#class Interp1dDict(interp1d):
 
 
 
-def get_FDMNES_Gamma(energy, Efermi, **kwargs):
-    Gamma_hole = kwargs.get("Gamma_hole", 1.)
-    Ecent = kwargs.get("Ecent", 30.)
-    Elarg = kwargs.get("Elarg", 30.)
-    Gamma_max = kwargs.get("Gamma_max", 15.)
+def translate_fdmnes(names):
+    indices = dict(x=1, y=2, z=3)
+    for i,name in enumerate(names):
+        sym, ind = name.split("_")
+        if sym=="D":
+            sym = "dd"
+            ind = "%i%i"%(indices[ind[0]], indices[ind[1]])
+        elif sym=="I":
+            sym = "dq"
+            ind = "%s%i%i"%(ind[2], indices[ind[0]], indices[ind[1]])
+        else:
+            continue
+        names[i] = "%s_%s"%(sym, ind)
     
-    e = (energy - Efermi) / Ecent
-    Gamma = Gamma_hole * np.ones(len(energy))
-    ind = e>0
-    Gamma[ind] += Gamma_max * \
-                     (   0.5 \
-                       + 1./np.pi * np.arctan( np.pi/3. \
-                                             * Gamma_max/Elarg \
-                                             * (e[ind]-1./e[ind]**2) 
-                                             ) 
-                    )
-    return Gamma
+    return names
 
+
+class _named2darray(np.ndarray):
+    def set_fields(self, fields):
+        if len(fields) != self.shape[1]:
+            raise ValueError("shape mismatch: number of columns and length of "
+                             "fields must agree")
+        if not all(map(lambda s: isinstance(s, str), fields)):
+            raise ValueError("Fields must be sequence of type str")
+        
+        self._fields = fields
+    
+    def __getitem__(self, key):
+        if hasattr(self, "_fields") and key in self._fields:
+            key = (slice(None), self._fields.index(key))
+        return super(_named2darray, self).__getitem__(key)
+
+    def __setitem__(self, key, val):
+        if hasattr(self, "_fields") and key in self._fields:
+            key = (slice(None), self._fields.index(key))
+        return super(_named2darray, self).__setitem__(key, val)
+
+def named2darray(array, fields):
+    array = _named2darray(array.shape, 
+                          dtype = array.dtype,
+                          buffer = array)
+    array.set_fields(fields)
+    return array
 
 
 def makefunc(expr, mathmodule = "numpy"):
@@ -166,6 +190,8 @@ class unit_cell(object):
         self.AU_formfactors = {} # only asymmetric unit, isotropic
         self.AU_formfactorsDD = {} # only asymmetric unit, pure dipolar
         self.AU_formfactorsDQ = {} # only asymmetric unit, dipolar-quadrupolar interference
+        self.AU_formfactorsDDc = {} # only asymmetric unit, pure dipolar, cartesian
+        self.AU_formfactorsDQc = {} # only asymmetric unit, dipolar-quadrupolar interference, cartesian
         self.miller = sp.symbols("h k l", integer=True)
         self.subs = {}
         self.energy = sp.Symbol("epsilon", real=True)
@@ -180,7 +206,19 @@ class unit_cell(object):
         self.occupancy = {}
         
         if str(structure).isdigit():
-            self._init_lattice(int(structure))
+            structure = int(structure)
+            if structure<=230:
+                print("Setting up space group %i..."%structure)
+                self._init_lattice(int(structure))
+            else:
+                print("Looking up Crystallography Open Database for entry %i..."%structure)
+                codurl = "http://www.crystallography.net/cod/%i.cif"%structure
+                handle = urllib2.urlopen(codurl)
+                text = handle.read()
+                handle.close()
+                ciffile = StringIO.StringIO(text)
+                self.load_cif(ciffile, resonant, **kwargs)
+
         elif len(structure)==2 and str(structure[0]).isdigit():
             sg_num, self.sg_sym = structure
             self._init_lattice(int(sg_num))
@@ -273,10 +311,14 @@ class unit_cell(object):
         else:
             my_ff_args = dict({"real":True})
         if isotropic:
-            Sym = sp.Symbol("f_" + label, **my_ff_args)
-            self.S[Sym.name] = Sym
+            Sym = sp.Symbol("f_" + element, **my_ff_args)
+            if Sym.name in self.S:
+                Sym = self.S[Sym.name]
+            else:
+                self.S[Sym.name] = Sym
             self.AU_formfactors[label] = Sym
         elif not isotropic:
+            self.resonant = element
             Sym = sp.Symbol("f_" + label + "_0", real=True)
             self.S[Sym.name] = Sym
             self.AU_formfactors[label] = Sym
@@ -312,7 +354,7 @@ class unit_cell(object):
                         # See eq. 12 in Kokubun et al. http://dx.doi.org/10.1103/PhysRevB.82.205206
             applymethod(f_DQ, "simplify")
             # transformation to lattice units:
-            self.AU_formfactorsDQ[label] = full_transform(self.M0, f_DQ)
+            self.AU_formfactorsDQ[label]  = full_transform(self.M0, f_DQ)
             #self.AU_formfactorsDQ[label] = full_transform(self.B_0, f_DQ)
             # transformation to lattice units:
             #self.AU_formfactorsDQ[label] = full_transform(self.B_0.inv().T, f_DQ)
@@ -338,10 +380,20 @@ class unit_cell(object):
         except Exception as e:
             print("File doesn't seem to be a valid .cif file: %s"%fname)
             raise IOError(e)
-        try:
+        if cif.has_key("_symmetry_int_tables_number"):
             sg_num = int(cif["_symmetry_int_tables_number"])
-        except Exception as errmsg:
-            raise ValueError("space group number could not be determined from .cif file `%s`:\n%s"%(structure, errmsg))
+        elif cif.has_key("_space_group_IT_number"):
+            sg_num = int(cif["_space_group_IT_number"])
+        else:
+            sg_num = None
+            sg_sym = cif["_symmetry_space_group_name_h-m"]
+            sg_sym = "".join(sg_sym.split())
+            for i in range(1, 230):
+                sett = get_ITA_settings(i)
+                if sg_sym in sett:
+                    sg_num = i
+        if sg_num==None:
+            raise ValueError("space group number could not be determined from .cif file `%s`:"%fname)
         ITA = get_ITA_settings(sg_num)
         if len(ITA)>1:
             print("Multiple settings found in space group %i"%sg_num)
@@ -397,13 +449,13 @@ class unit_cell(object):
         for key in loop.keys():
             loop[key.lower()] = loop[key]
         for line in loop:
-            symbol = line._atom_site_type_symbol
-            symbol = filter(str.isalpha, symbol)
             label = line._atom_site_label
+            symbol = label[:2].capitalize()
+            symbol = symbol if symbol in elements.Z else symbol[0]
             px = sp.S(getcoord(line._atom_site_fract_x))
             py = sp.S(getcoord(line._atom_site_fract_y))
             pz = sp.S(getcoord(line._atom_site_fract_z))
-            occ = mkfloat(line._atom_site_occupancy)
+            occ = mkfloat(line._atom_site_occupancy) if loop.has_key("_atom_site_occupancy") else 1
             position = (px, py, pz)
             isotropic = (symbol not in resonant)
             if loop.has_key("_atom_site_u_iso_or_equiv"):
@@ -539,6 +591,10 @@ class unit_cell(object):
             applymethod(self.AU_formfactorsDD[label], "simplify")
             applymethod(self.AU_formfactorsDQ[label], "subs", symmetries)
             applymethod(self.AU_formfactorsDQ[label], "simplify")
+            self.AU_formfactorsDDc[label]  = full_transform(self.M0inv, self.AU_formfactorsDD[label])
+            self.AU_formfactorsDQc[label]  = full_transform(self.M0inv, self.AU_formfactorsDQ[label])
+            applymethod(self.AU_formfactorsDDc[label], "simplify")
+            applymethod(self.AU_formfactorsDQc[label], "simplify")
             if self.DEBUG:
                 print self.AU_formfactorsDD[label], self.AU_formfactorsDQ[label]
     
@@ -658,9 +714,11 @@ class unit_cell(object):
         self.density = self.u * self.total_weight/1000. / (self.V*1e-10**3) # density in g/cm^3
         return float(self.density.subs(self.subs).n())
     
-    def calc_structure_factor(self, miller=None, DD=True, DQ=True, Temp=True):
+    def calc_structure_factor(self, miller=None, DD=True, DQ=True, Temp=True, 
+                                    subs=False, evaluate=False):
         """
-            Takes the three Miller-indices of Type int and calculates the Structure Factor in the reciprocal basis.
+            Takes the three Miller-indices of Type int and calculates the 
+            Structure Factor in reciprocal basis.
         """
         if miller==None:
             miller = self.miller
@@ -670,8 +728,11 @@ class unit_cell(object):
         G = self.G.subs(self.subs)
         Gc = self.Gc.subs(self.subs)
         self.F_0 = sp.S(0)
-        self.F_DD = np.zeros((3,3), object)
-        self.F_DQ = np.zeros((3,3,3), object)
+        if DD:
+            self.F_DD = np.zeros((3,3), object)
+        if DQ:
+            self.F_DQin = np.zeros((3,3,3), object)
+            self.F_DQsc = np.zeros((3,3,3), object)
         for Atom in self.positions: # get position, formfactor and symmetry if DQ tensor
             if Temp:
                 Temp = float(Temp)
@@ -680,32 +741,44 @@ class unit_cell(object):
                 DW = 1
             o = self.occupancy[Atom]
             if self.formfactors.has_key(Atom):
-                for i in range(len(self.formfactors[Atom])):
+                for i, f in enumerate(self.formfactors[Atom]):
                     r = self.positions[Atom][i]
-                    f = self.formfactors[Atom][i]
                     if self.DEBUG: print r, G.dot(r)
                     self.F_0 += o * f * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
             if self.formfactorsDD.has_key(Atom) and DD:
-                for i in range(len(self.formfactorsDD[Atom])):
+                for i, f in enumerate(self.formfactorsDD[Atom]):
                     r = self.positions[Atom][i]
-                    f = self.formfactorsDD[Atom][i]
                     self.F_DD += o * f * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
             if self.formfactorsDQ.has_key(Atom) and DQ:
-                for i in range(len(self.formfactorsDQ[Atom])):
+                for i, f_in in enumerate(self.formfactorsDQ[Atom]):
                     r = self.positions[Atom][i]
-                    f = self.formfactorsDQ[Atom][i]
-                    #fou = -fin.transpose(0,2,1) # if no magnetism
-                    self.F_DQ += sp.I * o * f * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
-        
+                    f_sc = - f_in.copy().transpose(0,2,1)
+                    #applymethod(f_sc, "conjugate") # only real parameters as in FDMNES!!!!?
+                    #self.F_DQ += o * (f_in - f_out) * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
+                    self.F_DQin += o * f_in * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
+                    self.F_DQsc += o * f_sc * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
+                    
         self.q = self.qfunc.dictcall(self.subs)
         self.d = 1/self.q
         self.theta = sp.asin(12398./(2*self.d*self.energy))
         
         # simplify:
+            
         if DD:
+            if subs:
+                applymethod(self.F_DD, "subs", self.subs)
+            if evaluate:
+                applymethod(self.F_DD, "n")
             self.F_DD = ArraySimp2(self.F_DD)
         if DQ:
-            self.F_DQ = ArraySimp2(self.F_DQ)
+            if subs:
+                applymethod(self.F_DQin, "subs", self.subs)
+                applymethod(self.F_DQsc, "subs", self.subs)
+            if evaluate:
+                applymethod(self.F_DQin, "n")
+                applymethod(self.F_DQsc, "n")
+            self.F_DQin = ArraySimp2(self.F_DQin)
+            self.F_DQsc = ArraySimp2(self.F_DQsc)
         
     def hkl(self):
         return tuple(self.subs[ind] for ind in self.miller)
@@ -719,7 +792,7 @@ class unit_cell(object):
             Acta Cryst. (1991). A47, 180-195 [doi:10.1107/S010876739001159X]
         """
         if not hasattr(self, "F_0") or \
-           (AAS and (not hasattr(self, "F_DD") or not hasattr(self, "F_DQ"))):
+           (AAS and (not hasattr(self, "F_DD") or not hasattr(self, "F_DQin"))):
             raise ValueError("No Reflection initialized. "
                              " Run self.calc_structure_factor() first.")
         # now the structure factors in a cartesian system follow
@@ -727,14 +800,18 @@ class unit_cell(object):
         if AAS:
             #self.Fc_DD = full_transform(B_0_inv, self.F_DD) # RLU
             #self.Fc_DQ = full_transform(B_0_inv, self.F_DQ) # RLU
-            self.Fc_DD = full_transform(self.M0inv, self.F_DD)
-            self.Fc_DQ = full_transform(self.M0inv, self.F_DQ)
+            self.Fc_DD   = full_transform(self.M0inv, self.F_DD)
+            self.Fc_DQin = full_transform(self.M0inv, self.F_DQin)
+            self.Fc_DQsc = full_transform(self.M0inv, self.F_DQsc)
         
         # and now: the rotation into the diffractometer system 
         #       (means rotation G into xd-direction)
         # calculate corresponding angles
         
-        Gc = self.Gc.subs(zip(self.miller, self.hkl()))
+        if subs:
+            Gc = self.Gc.subs(self.subs)
+        else:
+            Gc = self.Gc.subs(zip(self.miller, self.hkl()))
         
         if Gc[1] == 0: phi = 0
         elif Gc[0] == 0: phi = sp.S("pi/2")*sp.sign(Gc[1])
@@ -771,12 +848,14 @@ class unit_cell(object):
             applymethod(self.Q, "simplify")
             if AAS:
                 self.Fc_DD = ArraySimp1(self.Fc_DD)
-                self.Fc_DQ = ArraySimp1(self.Fc_DQ)
+                self.Fc_DQin = ArraySimp1(self.Fc_DQin)
+                self.Fc_DQsc = ArraySimp1(self.Fc_DQsc)
         
         self.Fd_0 = self.Fc_0
         if AAS:
             self.Fd_DD = full_transform(self.Q.T, self.Fc_DD)
-            self.Fd_DQ = full_transform(self.Q.T, self.Fc_DQ)
+            self.Fd_DQin = full_transform(self.Q.T, self.Fc_DQin)
+            self.Fd_DQsc = full_transform(self.Q.T, self.Fc_DQsc)
         self.Q = sp.Matrix(self.Q)
         self.Gd = self.Q * Gc
         
@@ -809,21 +888,21 @@ class unit_cell(object):
     
     
     def calc_scattered_amplitude(self, psi=None, assume_imag=False, assume_real=False,
-                                       DD=True, DQ=True, simplify=True):
-        if not hasattr(self, "Fd_0"):
-            self.transform_structure_factor()
+                                       DD=True, DQ=True, simplify=True, subs=True):
+        
+        self.transform_structure_factor(AAS = (DD+DQ), subs=subs, simplify=simplify)
         if psi==None:
             self.psi = psi = sp.Symbol("psi", real=True)
             self.S[psi.name] = psi
-        self.transform_structure_factor()
+        
         sigma = sp.Matrix([0,0,1])
         k = self.energy / 12398.42
         self.k_plus = 2 * k * sp.cos(self.theta)
         pi_i = sp.Matrix([sp.cos(self.theta),  sp.sin(self.theta), 0])
         pi_s = sp.Matrix([sp.cos(self.theta), -sp.sin(self.theta), 0])
         
-        vec_k_i = k * sp.Matrix([-sp.sin(self.theta), sp.cos(self.theta), 0]) #alt
-        vec_k_s = k * sp.Matrix([ sp.sin(self.theta), sp.cos(self.theta), 0]) #alt
+        vec_k_i = sp.Matrix([-sp.sin(self.theta), sp.cos(self.theta), 0]) #alt
+        vec_k_s = sp.Matrix([ sp.sin(self.theta), sp.cos(self.theta), 0]) #alt
         self.vec_k_i, self.vec_k_s = vec_k_i, vec_k_s
         # introduce rotational matrix
         self.Psi = Psi = np.array([[1,            0,           0],
@@ -836,9 +915,11 @@ class unit_cell(object):
             if simplify:
                 applymethod(self.Fd_psi_DD, "simplify")
         if DQ:
-            self.Fd_psi_DQ = full_transform(Psi.T, self.Fd_DQ)
+            self.Fd_psi_DQin = full_transform(Psi.T, self.Fd_DQin)
+            self.Fd_psi_DQsc = full_transform(Psi.T, self.Fd_DQsc)
             if simplify:
-                applymethod(self.Fd_psi_DQ, "simplify")
+                applymethod(self.Fd_psi_DQin, "simplify")
+                applymethod(self.Fd_psi_DQsc, "simplify")
         
         
 #        # calculate symmetric and antisymmetric DQ Tensors
@@ -861,11 +942,15 @@ class unit_cell(object):
 #            self.Fd += sp.I * self.q      * self.Fd_psi_DQs[0] \
 #                     + sp.I * self.k_plus * self.Fd_psi_DQa[1]
 #       
-        # The Contraction:
+        # The Contraction: 
+#        self.Fd_psi_DQ_out = self.Fd_psi_DQ.copy().transpose(0,2,1)
+#        applymethod(self.Fd_psi_DQ_out, "conjugate") # only real parameters as in FDMNES!!!!?
+        
+        
         self.Fd = np.eye(3) * self.Fd_psi_0 \
                 + self.Fd_psi_DD \
-                + np.tensordot(vec_k_i, self.Fd_psi_DQ, axes=(0,0)).squeeze() \
-                + np.tensordot(vec_k_s, self.Fd_psi_DQ.transpose(0,2,1), axes=(0,0)).squeeze() # if no magnetism!
+                + sp.I * ( np.tensordot(vec_k_i, self.Fd_psi_DQin, axes=(0,0)).squeeze() \
+                         + np.tensordot(vec_k_s, self.Fd_psi_DQsc, axes=(0,0)).squeeze())
         
         self.Fd = sp.Matrix(self.Fd)
         if simplify:
@@ -880,11 +965,6 @@ class unit_cell(object):
         self.E["pp"] = (pi_s.T * self.Fd * pi_i)[0]
         
         return True
-    
-    
-    
-    
-    
     
     
     def feed_feff(self, label, energy, fprime, fsecond):
@@ -992,72 +1072,60 @@ class unit_cell(object):
         return f
     
     
-    def get_tensors_FDMNES(self, path, label, **kwargs):
+    def get_tensors_FDMNES(self, path, label, Eedge, Emin=None, Emax=None):
+        
         if label not in self.AU_formfactorsDD:
             raise ValueError("label %s not found in list of anisotric atoms"
                              %str(label))
         with open(path) as fh:
-            header1 = fh.readline()
-            header2 = fh.readline()
-            data = np.loadtxt(path, skiprows=2)
-        if not hasattr(self, "FDMNES_Aes"):
-            self.FDMNES_Aes = dict()
-        if not hasattr(self, "FDMNES_ftensor"):
-            self.FDMNES_ftensor = dict()
-        pv, pn = header1.split("=")
-        pn = map(str.strip, pn.split(","))
-        # E_edge, Z, n_edge, j_edge, Abs_before_edge, VO_interstitial, E_Fermi, ninitl, ninit1, Epsii, Atom_density, f0_forward
-        parameters = dict(zip(pn, pv.split()))
-        self.FDMNES_parameters = parameters
+            header = fh.readline()
+        header = header.split()
+        if not header[0]=="Energy" and header[1]=="D_xxp":
+            raise ValueError("%s doesn't seem to be a valid file of cartesian "
+                             "tensors. (Need convoluted values)")
         
-        Eedge = float(parameters["E_edge"])
-        Efermi = kwargs.pop("Efermi", float(parameters["E_Fermi"]))
-        Gamma_var = kwargs.pop("Gamma_var", False)
+        data = np.loadtxt(path, skiprows=1)
+        E = data[:,0] + Eedge
+        ind = np.ones(len(E), dtype=bool)
+        if Emin!=None:
+            ind *= E > Emin
+        if Emax!=None:
+            ind *= E < Emax
+        E = E[ind]
+        data = data[ind]
+        data = data.astype(complex)[:,1:]
+        data[:,::2] += 1j * data[:,1::2]
+        data = data[:,::2]
+        header = map(lambda s: s.strip("p"), header[1::2])
         
-        Erange = data[-1,0] - data[0,0]
-        N = len(data)
-        M = kwargs.pop("tailpoints", 100)
-        data = np.vstack([data, np.zeros((M, data.shape[1]))]) # append tail
-        dE = data[N-1,0] - data[N-2,0]
-        data[N:,0] = data[N-1,0] + np.linspace(dE, 5*M, M)
-        energy = data[:,0]
-        data[N:, 1:] = data[N-1, 1:] / (energy[N:][:,None]/energy[N-1])
+        header = translate_fdmnes(header)
         
-        self.FDMNES_Gamma = Gamma = get_FDMNES_Gamma(energy, Efermi, **kwargs)
+        data = named2darray(data.copy(), header)
         
+        fiso = np.mean([data["dd_%s"%s] for s in ["11", "22", "33"]], 0) 
         
-        columns = header2.split()
-        colDQ = np.array(map(lambda s: s.startswith("I_"), columns))
-        data = data.astype(complex)
-        data[:,colDQ] *= 1j
-        conversion = self.electron_radius * 2 * self.eV_A / (data[:,0]+Eedge) * 1e12
-        data[:,1:] /= conversion[:,None]
-        data[energy<Efermi,1:] = 0.
+        data["dd_11"] -= fiso
+        data["dd_22"] -= fiso
+        data["dd_33"] -= fiso
+
+        ftab = self.get_f1f2_isotropic(E)[label]
+        lin = ((ftab[-1] - fiso[-1]) - (ftab[0] - fiso[0]))/(E[-1] - E[0]) \
+                          * (E - E[0]) + (ftab[0] - fiso[0])
+        fiso += lin
+        self.feed_feff(label, E, fiso.real, fiso.imag)
         
-#        import pylab as pl
-#        pl.plot(data[:,0], data[:,1], ".-")
-#        pl.show()
+        if not hasattr(self, "f_aniso"):
+            self.f_aniso = dict()
+        if not hasattr(self, "f_aniso_func"):
+            self.f_aniso_func = dict()
         
+        self.f_aniso[label] = data
+        self.f_aniso_func[label] = interp1d(E, data.T, 
+                                            bounds_error = False, 
+                                            fill_value = 0.)
+        self.f_aniso_func[label].components = header
         
-        data_conv = []
-        for i, hw in enumerate(energy[:N]):
-            if Gamma_var:
-                lorentzian = hw - energy + 1j*Gamma/2.
-            else:
-                lorentzian = hw - energy + 1j*Gamma[i]/2.
-            data_conv.append(np.trapz(data[:,1:]/lorentzian[:,None], energy, axis=0))
-        
-        data_conv = np.vstack(data_conv)
-        data = data[:N]
-        data[:,0] += Eedge
-        data_conv = np.hstack([data[:,0][:,None].astype(complex), data_conv])
-        data = collections.OrderedDict(zip(columns, data.T))
-        data_conv = collections.OrderedDict(zip(columns, data_conv.T))
-        
-        self.FDMNES_Aes[label] = data
-        self.FDMNES_ftensor[label] = data_conv
-        
-        ################################################################
+        return E, data
     
     
     
@@ -1093,8 +1161,9 @@ class unit_cell(object):
     
     
     
-    def DAFS(self, energy, miller=None, f1=None, f2=None, DD=False, DQ=False,
-             Temp=True, psi=0, func_output=False, fwhm_ev=0.25, table="Sasaki"):
+    def DAFS(self, energy, miller=None, DD=False, DQ=False, Temp=True, psi=0,
+             func_output=False, fwhm_ev=0.25, table="Sasaki", channel="ss",
+             simplify=True, subs=True):
         """
             Calculates a Diffraction Anomalous Fine Structure (DAFS) curve for
             a given array of energies and a certain Bragg reflection hkl
@@ -1114,37 +1183,66 @@ class unit_cell(object):
             If ``func_output`` is True, a function for the structure amplitude
             F(E) is returned. Otherwise, it's the Intensity array.
         """
+        
         if (miller!=None and len(miller)==3) or not hasattr(self, "F_0"):
-            self.calc_structure_factor(miller, DD=DD, DQ=DQ, Temp=Temp)
-            self.transform_structure_factor(AAS=(DQ+DD))
+            self.calc_structure_factor(miller, DD=DD, DQ=DQ, Temp=Temp,
+                                               subs=subs, evaluate=subs)
             self.f0.clear()
         
-        AAS = DD + DQ
         
         f1f2 = self.get_f1f2_isotropic(energy, fwhm_ev, table)
         
         self.f = f = {}
         
         for label in self.AU_formfactors:
-            if AAS and label in self.AU_formfactorsDD:
-                continue
             ffsymbol = self.AU_formfactors[label]
             element = self.elements[label]
-            
+            ####################################################################################
             if not self.f0.has_key(element):
-                if self.DEBUG: print("Calculating nonresonant scattering amplitude for %s"%element)
+                if self.DEBUG:
+                    print("Calculating nonresonant scattering amplitude for %s"%element)
                 self.f0[element] = self.f0func[element].dictcall(self.subs)
             
             f[ffsymbol] = f1f2[label] + float(self.f0[element])
         
-        self.Feval = Feval = self.F_0.subs(self.subs).n().simplify()
+        
+        if DD or DQ:
+            if miller==None and hasattr(self, "E"):
+                pass
+            else:
+                self.calc_scattered_amplitude(simplify=simplify, DD=DD, DQ=DQ,
+                                              subs=subs)
+            Feval = self.E[channel]
+            f_aniso = dict()
+            for sym in set.intersection(Feval.atoms(), self.S.values()):
+                if not sym.name.startswith("f_"):
+                    continue
+                label = sym.name.split("_")[1]
+                component = "_".join(sym.name.split("_")[2:])
+                if component[:2] not in ["dd", "dq"]:
+                    continue
+                if not label in f_aniso and label in self.f_aniso_func:
+                    func = self.f_aniso_func[label]
+                    f_aniso[label] = named2darray(func(energy).T, func.components)
+                #if component in f_aniso[label]:
+                f[sym] = f_aniso[label][component]
+            
+            f[self.energy] = energy
+            f[self.S["psi"]] = psi
+        else:
+            Feval = self.F_0.subs(self.subs).n()
+        
+        if simplify:
+            Feval = Feval.simplify()
+            
+        self.Feval = Feval
         
         F0_func = makefunc(Feval)
         
         if func_output:
             return F0_func
         else:
-            return abs(F0_func.dictcall(f))**2
+            return F0_func.dictcall(f)
     
     
     def simplify(self): # a longshot
