@@ -4,6 +4,9 @@ import urllib
 import cPickle as pickle
 import numpy as np
 import itertools
+import scatfaccoef
+import string
+
 DBPATH = os.path.join(os.path.dirname(__file__), "space-groups.sqlite")
 f0PATH = os.path.join(os.path.dirname(__file__), "f0_lowq.sqlite")
 SETTPATH = os.path.join(os.path.dirname(__file__), "settings.txt")
@@ -352,7 +355,8 @@ def get_rec_cell_parameters(a, b, c, alpha, beta, gamma):
     
     return (ar, br, cr, alphar, betar, gammar, M, Mi, G, G_r)
 
-def calc_f0(element, q, database = f0PATH): # q is 2 sin(theta)/lambda
+
+def calc_f0(ion, q): # q is 2 sin(theta)/lambda
     """
         Calculates the nonresonant scattering factor for elements and common ions
         in the range of sin(theta)/lambda < 2.0 per Angstrom.
@@ -360,22 +364,25 @@ def calc_f0(element, q, database = f0PATH): # q is 2 sin(theta)/lambda
         The input q corresponds to 2*sin(theta)/lambda and can be a symbolic value.
     """
     x = q/2.
-    if (x>2)==True:
+    if np.any(x>2)==True:
         print("Warning: the used expansion only gives a good agreement for values "\
-               "sin(theta)/lambda < 2 A^-1. The value entered (%g) exceeds this"%float(x))
-    import sqlite3
+               "sin(theta)/lambda < 2 A^-1. The value entered (%g) exceeds this"%np.max(x))
     import sympy
-    dbi = sqlite3.connect(database)
-    cur = dbi.cursor()
-    cur.execute("SELECT * FROM f0_lowq WHERE ion = '%s'" %element)
-    result=cur.fetchone()
-    dbi.close()
-    a = sympy.Matrix(result[1:5])
-    b = sympy.Matrix(result[5:9])
-    c = result[9]
+    if ion not in scatfaccoef.f0:
+        element = ion.strip(string.digits + "+-") # strip valence info
+        if element in scatfaccoef.f0:
+            print("Warning: ion %s not found in database. Trying uncharged state: %s"%(ion, element))
+            ion = element
+    coef = scatfaccoef.f0[ion]
+    a = sympy.Matrix(coef[0:4])
+    b = sympy.Matrix(coef[4:8])
+    c = coef[8]
+    #print a, b, c
     #return  (a,(-b*(q/2)**2).applyfunc(sympy.exp)) # + c
-    f0 = sum(a.multiply_elementwise((-b*x**2).applyfunc(sympy.exp))) + c
-    return f0
+    f0 = lambda val: sum(a.multiply_elementwise((-b*val**2).applyfunc(sympy.exp))) + c
+    if isinstance(q, np.ndarray):
+        f0 = np.vectorize(f0)
+    return f0(x)
     
     
 

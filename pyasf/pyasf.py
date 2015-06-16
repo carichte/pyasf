@@ -70,15 +70,24 @@ class _named2darray(np.ndarray):
     
     def __getitem__(self, key):
         if hasattr(self, "_fields") and key in self._fields:
-            key = (slice(None), self._fields.index(key))
+            key = Ellipsis, self._fields.index(key)
+        elif hasattr(self, "_fields") and hasattr(key, "__iter__"):
+            if all([k in self._fields for k in key]):
+                key = Ellipsis, [self._fields.index(k) for k in key]
         return super(_named2darray, self).__getitem__(key)
 
     def __setitem__(self, key, val):
         if hasattr(self, "_fields") and key in self._fields:
-            key = (slice(None), self._fields.index(key))
+            key = Ellipsis, self._fields.index(key)
+        elif hasattr(self, "_fields") and hasattr(key, "__iter__"):
+            if all([k in self._fields for k in key]):
+                key = Ellipsis, [self._fields.index(k) for k in key]
         return super(_named2darray, self).__setitem__(key, val)
 
 def named2darray(array, fields):
+    assert array.ndim == 2, "Number of dimensions should be 2"
+    assert array.shape[1] == len(fields), \
+            "Number of columns and fields do not match"
     array = _named2darray(array.shape, 
                           dtype = array.dtype,
                           buffer = array)
@@ -126,6 +135,7 @@ ArraySimp1 = np.vectorize(
 ArraySimp2 = np.vectorize(
     lambda ele:ele.rewrite(sp.exp, sp.sin).expand() if hasattr(ele, "rewrite") else ele,
     doc="Vectorized function to simplify symbolic array elements using rewrite")
+
 
 
 class unit_cell(object):
@@ -199,11 +209,12 @@ class unit_cell(object):
         self.S = dict([(s.name, s) for s in self.miller]) # dictionary of all symbols
         self.elements = {}
         self.U = collections.defaultdict(lambda: sp.zeros(3)) # dictionary of anisotropic mean square displacement
-        self.dE = {} # dictionary of edge shifts
-        self.f0func = {}
+        self.dE = dict() # dictionary of edge shifts
+        self.f0func = dict()
         self.feff_func = dict()
-        self.f0 = {}
-        self.occupancy = {}
+        self.f0 = dict()
+        self.occupancy = dict()
+        self.charges = collections.defaultdict(int)
         
         if str(structure).isdigit():
             structure = int(structure)
@@ -232,7 +243,7 @@ class unit_cell(object):
     
     def _init_lattice(self, sg_num):
         self.sg_num = sg_num
-        self.generators=get_generators(self.sg_num, self.sg_sym) # fetch the space group generators
+        self.generators = map(np.array, get_generators(self.sg_num, self.sg_sym)) # fetch the space group generators
         if self.sg_sym!=None:
             self.transform = transform = get_ITA_settings(self.sg_num)[self.sg_sym]
         metrik = get_cell_parameters(self.sg_num, self.sg_sym)
@@ -243,11 +254,11 @@ class unit_cell(object):
         self.alphar, self.betar, self.gammar = recparam[3:6] # reciprocal lattice angles
         self.M, self.Minv = recparam[6:8] # transformation matrices
         dsub = {self.a:1, self.b:1, self.c:1}
-        self.M0 = self.M.subs(dsub)
-        self.M0inv = self.Minv.subs(dsub)
+        self.M0 = self.M.subs(dsub)#.subs(self.subs)
+        self.M0inv = self.Minv.subs(dsub)#.subs(self.subs)
         self.metric_tensor, self.metric_tensor_inv = recparam[8:10] # metric tensors
-        self.metric_tensor_0 = self.metric_tensor.subs(dsub)
-        self.metric_tensor_inv_0 = self.metric_tensor_inv.subs(dsub)
+        self.metric_tensor_0 = self.metric_tensor.subs(dsub)#.subs(self.subs)
+        self.metric_tensor_inv_0 = self.metric_tensor_inv.subs(dsub)#.subs(self.subs)
         self.G = sp.Matrix(self.miller)
         # G is a vector in reciprocal space -> dual space
         # To transform it to cartesian space:
@@ -259,7 +270,7 @@ class unit_cell(object):
         self.qfunc = makefunc(self.q, sp)
         self.V = sp.sqrt(self.metric_tensor.det())
         
-    def add_atom(self, label, position, isotropic=True, assume_complex=True, dE=0, occupancy=1):
+    def add_atom(self, label, position, isotropic=True, assume_complex=True, dE=0, occupancy=1, charge=None):
         """
             Method to fill the asymmetric unit with atoms.
             
@@ -283,7 +294,8 @@ class unit_cell(object):
                     Sets the shift of the absorption edge for this particular
                     atom.
         """
-        if type(label) is not str: raise TypeError("Invalid label. Need string.")
+        
+        if not isinstance(label, str): raise TypeError("Invalid label. Need string.")
         if len(position) is not 3: raise TypeError("Enter 3D position object!")
         position = list(position)
         for i in range(3):
@@ -303,8 +315,12 @@ class unit_cell(object):
         self.elements[label] = element
         self.AU_positions[label] = np.array(position)
         self.dE[label] = dE
-        if not self.f0func.has_key(element):
-            self.f0func[element] = makefunc(calc_f0(element, self.Gc.norm()), sp)
+        if charge!=None:
+            self.charges[label] = int(charge)
+        
+        ion = self.get_ion(label)
+        if not self.f0func.has_key(ion):
+            self.f0func[ion] = makefunc(calc_f0(ion, self.Gc.norm()), sp)
         self.occupancy[label] = occupancy
         if assume_complex:
             my_ff_args = dict({"complex":True})
@@ -317,7 +333,7 @@ class unit_cell(object):
             else:
                 self.S[Sym.name] = Sym
             self.AU_formfactors[label] = Sym
-        elif not isotropic:
+        else:
             self.resonant = element
             Sym = sp.Symbol("f_" + label + "_0", real=True)
             self.S[Sym.name] = Sym
@@ -340,10 +356,10 @@ class unit_cell(object):
             # crystal units allowing us to apply symmetry from ITC:
             self.AU_formfactorsDD[label] = full_transform(self.M0, f_DD)
             # transformation to lattice units:
-            #self.AU_formfactorsDD[label] = full_transform(self.B_0.inv().T, f_DD)
+            # self.AU_formfactorsDD[label] = full_transform(self.B_0.inv().T, f_DD)
 
             f_DQ = np.zeros((3,3,3), dtype=object)
-            kindices=("x", "y", "z")
+            kindices = ("x", "y", "z")
             for h,i,j in itertools.product(ind, ind, ind):
                 if j<=h:
                     Sym = sp.Symbol("f_%s_dq_%s%i%i"%(label, kindices[h], i+1, j+1), **my_ff_args)
@@ -360,8 +376,18 @@ class unit_cell(object):
             #self.AU_formfactorsDQ[label] = full_transform(self.B_0.inv().T, f_DQ)
             if self.DEBUG:
                 print(self.AU_formfactorsDD[label], self.AU_formfactorsDQ[label])
+    
+    
+    def get_ion(self, label):
+        charge = self.charges[label]
+        ion = self.elements[label]
+        if charge > 0:
+            ion += "%i+"%abs(charge)
+        elif charge < 0:
+            ion += "%i-"%abs(charge)
         else:
-            raise TypeError("Enter boolean argument for isotropic")
+            pass
+        return ion
     
     def load_cif(self, fname, resonant="", max_denominator=10000):
         """
@@ -450,6 +476,11 @@ class unit_cell(object):
             loop[key.lower()] = loop[key]
         for line in loop:
             label = line._atom_site_label
+            #symbol = line._atom_site_type_symbol
+            try:
+                charge = int(line._atom_site_type_symbol[-2:][::-1])
+            except:
+                charge = 0
             symbol = label[:2].capitalize()
             symbol = symbol if symbol in elements.Z else symbol[0]
             px = sp.S(getcoord(line._atom_site_fract_x))
@@ -467,7 +498,8 @@ class unit_cell(object):
                 iso = 0
             
             self.U[label] = sp.eye(3) * iso
-            self.add_atom(label, position, isotropic, assume_complex=True, occupancy=occ)
+            self.add_atom(label, position, isotropic, assume_complex=True, 
+                          occupancy=occ, charge=charge)
         
         if cif.has_key("_atom_site_aniso_label"):
             loop = cif.GetLoop("_atom_site_aniso_label")
@@ -542,11 +574,10 @@ class unit_cell(object):
             labels = self.AU_formfactorsDD.keys()
         self.equations={}
         for label in labels:
-            equations=[]
+            equations = set()
             for generator in self.generators:
-                W = np.array(generator[:,:3])
-                Wi = np.array(generator[:,:3].inv())
-                w = np.array(generator[:,3]).ravel()
+                W = generator[:,:3]
+                w = generator[:,3].ravel()
                 if self.DEBUG: print w, W
                 new_position = W.dot(self.AU_positions[label]) + w
                 new_position = np.array([stay_in_UC(i) for i in new_position])
@@ -574,13 +605,13 @@ class unit_cell(object):
                     #new_DD = np.tensordot(self.metric_tensor_inv_0, new_DD, (1,0))
                     #new_DQ = np.tensordot(self.metric_tensor_inv_0, new_DQ, (1,0))
                     
-                    equations.append((fDD - new_DD).ravel())
-                    equations.append((fDQ - new_DQ).ravel())
-            equations = np.hstack(equations)
+                    equations.update((fDD - new_DD).ravel())
+                    equations.update((fDQ - new_DQ).ravel())
+            equations.remove(0)
             if self.DEBUG:
                 print label, equations
             self.equations[label] = equations
-            symmetries=sp.solve(equations, dict=True)
+            symmetries = sp.solve(equations, dict=True, manual=True)
             if not symmetries:
                 continue
             assert len(symmetries)==1, "Unusual length of result of sp.solve (>1)"
@@ -603,6 +634,7 @@ class unit_cell(object):
         """
             transform structure unit with a given generator.
         """
+        generator = np.array(generator)
         if AU:
             positions = self.AU_positions
             formfactorsDD = self.AU_formfactorsDD
@@ -611,20 +643,17 @@ class unit_cell(object):
             positions = self.positions
             formfactorsDD = self.formfactorsDD
             formfactorsDQ = self.formfactorsDQ
-        if np.shape(generator)==(4, 3):
-            generator = np.array(generator).T
-        if np.shape(generator)==(3, 4):
-            W = np.array(generator[:,:3])
-            W = np.array(generator[:,:3].inv())
-            w = np.ravel(generator[:,3])
-        elif np.shape(generator)==(3, 3):
-            W = np.array(generator[:,:3])
-            Wi = np.array(generator[:,:3].inv())
+        if generator.shape == (4, 3):
+            generator = generator.T
+        if generator.shape == (3, 4):
+            W = generator[:,:3]
+            w = generator[:,3].ravel()
+        elif generator.shape == (3, 3):
+            W = generator
             w = np.zeros(3)
-        elif len(np.ravel(generator))==3:
+        elif len(generator.ravel())==3:
             W = np.diag((1,1,1))
-            Wi = np.diag((1,1,1))
-            w = np.ravel(generator)
+            w = generator.ravel()
         else:
             return
         for name in positions.keys():
@@ -651,43 +680,35 @@ class unit_cell(object):
             Generates all Atoms of the Unit Cell.
         """
         #if hasattr(self, "cell"): return
-        self.cell=[]
-        self.positions={}
-        self.formfactors={}
-        self.formfactorsDD={}
-        self.formfactorsDQ={}
-        for name in self.AU_positions.keys():
-            self.positions[name]=[]
-            self.formfactors[name]=[]
-            if self.AU_formfactorsDD.has_key(name):
-                self.formfactorsDD[name]=[]
-            if self.AU_formfactorsDQ.has_key(name):
-                self.formfactorsDQ[name]=[]
+        self.multiplicity = collections.defaultdict(int)
+        self.positions = collections.defaultdict(list)
+        self.formfactors = collections.defaultdict(list)
+        self.formfactorsDD = collections.defaultdict(list)
+        self.formfactorsDQ = collections.defaultdict(list)
+        for label in self.AU_positions.keys():
             for generator in self.generators:
-                W = np.array(generator[:,:3])
-                Wi = np.array(generator[:,:3].inv())
-                w = np.array(generator[:,3]).ravel()
-                #print W, self.AU_positions[name], w
-                new_position = W.dot(self.AU_positions[name]) + w
+                W = generator[:,:3]
+                w = generator[:,3].ravel()
+                #print W, self.AU_positions[label], w
+                new_position = W.dot(self.AU_positions[label]) + w
                 new_position = np.array([stay_in_UC(i) for i in new_position])
-                if len(self.positions[name])>0: 
-                    ind = ((new_position - np.array(self.positions[name]))**2).sum(1)
+                if len(self.positions[label])>0: 
+                    ind = ((new_position - np.array(self.positions[label]))**2).sum(1)
                 else:
                     ind = np.array((1))
-                if not (ind<self.eps).any():
-                    #if new_position not in self.positions[name]:
-                    if self.AU_formfactors.has_key(name): 
-                        self.formfactors[name].append(self.AU_formfactors[name])
-                        self.cell.append((new_position, self.formfactors[name][-1]))
-                    if self.AU_formfactorsDD.has_key(name):
-                        self.formfactorsDD[name].append(full_transform(W, self.AU_formfactorsDD[name]))
-                        self.cell.append((new_position, self.formfactorsDD[name][-1]))
-                    if self.AU_formfactorsDQ.has_key(name):
-                        self.formfactorsDQ[name].append(full_transform(W, self.AU_formfactorsDQ[name]))
-                        self.cell.append((new_position, self.formfactorsDQ[name][-1]))
-                    self.positions[name].append(new_position)
+                if not (ind < self.eps).any():
+                    #if new_position not in self.positions[label]:
+                    if label in self.AU_formfactors: 
+                        self.formfactors[label].append(self.AU_formfactors[label])
+                    if label in self.AU_formfactorsDD:
+                        self.formfactorsDD[label].append(full_transform(W, self.AU_formfactorsDD[label]))
+                    if label in self.AU_formfactorsDQ:
+                        self.formfactorsDQ[label].append(full_transform(W, self.AU_formfactorsDQ[label]))
+                    self.positions[label].append(new_position)
+                    self.multiplicity[label] += 1
         # rough estimate of the infimum of the distance of atoms:
-        self.mindist = 1./len(self.cell)**(1./3)/1000.
+        self.numato = sum(self.multiplicity.values())
+        self.mindist = 1./self.numato**(1./3)/1000.
     
     
     def get_density(self):
@@ -698,21 +719,28 @@ class unit_cell(object):
         assert hasattr(self, "positions"), \
             "Unable to find atom positions. Did you forget to perform the unit_cell.build_unit_cell() method?"
         self.species = np.unique(self.elements.values())
-        self.amounts = dict(zip(self.species, np.zeros(len(self.species), dtype=int)))
-        for label in self.positions.iterkeys():
-            self.amounts[self.elements[label]] += len(self.positions[label])
-        
+        self.stoichiometry = collections.defaultdict(float)
+        for label in self.elements:
+            self.stoichiometry[self.elements[label]] += self.multiplicity[label] * self.occupancy[label]
         
         self.weights = dict([(atom, xi.get_element(atom)[1]) for atom in self.species])
-        div = gcd(*self.amounts.values())
-        components = ["%s%i"%(item[0], item[1]/div) for item in self.amounts.iteritems()]
+        div = gcd(*self.stoichiometry.values())
+        components = ["%s%i"%(item[0], item[1]/div) for item in self.stoichiometry.iteritems()]
         components = map(lambda x: x[:-1] if (x[-1]=="1" and not x[-2].isdigit()) else x, components)
         self.SumFormula = "".join(components)
         
         
-        self.total_weight = sum([self.weights[atom]*self.amounts[atom] for atom in self.species])
+        self.total_weight = sum([self.weights[atom]*self.stoichiometry[atom] for atom in self.species])
         self.density = self.u * self.total_weight/1000. / (self.V*1e-10**3) # density in g/cm^3
         return float(self.density.subs(self.subs).n())
+
+    def get_stoichiometry(self):
+        """
+            Returns the stoichiometry of the current sample
+        """
+        self.get_density()
+        return self.SumFormula
+    
     
     def calc_structure_factor(self, miller=None, DD=True, DQ=True, Temp=True, 
                                     subs=False, evaluate=False):
@@ -723,7 +751,7 @@ class unit_cell(object):
         if miller==None:
             miller = self.miller
         self.subs.update(zip(self.miller, miller))
-        if not hasattr(self, "cell"):
+        if not hasattr(self, "positions"):
             self.build_unit_cell()
         G = self.G.subs(self.subs)
         Gc = self.Gc.subs(self.subs)
@@ -735,7 +763,8 @@ class unit_cell(object):
             self.F_DQsc = np.zeros((3,3,3), object)
         for Atom in self.positions: # get position, formfactor and symmetry if DQ tensor
             if Temp:
-                Temp = float(Temp)
+                if isinstance(Temp, bool):
+                    Temp = float(Temp)
                 DW = sp.exp(-2*sp.pi**2 * Temp * Gc.dot(self.U[Atom].dot(Gc)))
             else:
                 DW = 1
@@ -761,7 +790,7 @@ class unit_cell(object):
         self.q = self.qfunc.dictcall(self.subs)
         self.d = 1/self.q
         self.theta = sp.asin(12398./(2*self.d*self.energy))
-        
+        self.F_0 = self.F_0.expand()
         # simplify:
             
         if DD:
@@ -1144,7 +1173,7 @@ class unit_cell(object):
             element = self.elements[label]
             Z = elements.Z[element]
             
-            index_refraction += f1f2[label] * self.amounts[element] + Z
+            index_refraction += (Z + f1f2[label]) * self.multiplicity[label]
             
         
         index_refraction *= self.electron_radius/(2*np.pi) \
@@ -1183,12 +1212,16 @@ class unit_cell(object):
             If ``func_output`` is True, a function for the structure amplitude
             F(E) is returned. Otherwise, it's the Intensity array.
         """
-        
-        if (miller!=None and len(miller)==3) or not hasattr(self, "F_0"):
+        if not hasattr(self, "F_0"):
             self.calc_structure_factor(miller, DD=DD, DQ=DQ, Temp=Temp,
                                                subs=subs, evaluate=subs)
+        
+        if miller!=None and len(miller)==3:
+            self.subs.update(zip(self.miller, miller))
             self.f0.clear()
         
+        if not isinstance(energy, np.ndarray):
+            energy = np.array(energy, dtype=float, ndmin=1)
         
         f1f2 = self.get_f1f2_isotropic(energy, fwhm_ev, table)
         
@@ -1196,20 +1229,23 @@ class unit_cell(object):
         
         for label in self.AU_formfactors:
             ffsymbol = self.AU_formfactors[label]
-            element = self.elements[label]
-            ####################################################################################
-            if not self.f0.has_key(element):
+            ion = self.get_ion(label)
+            if not self.f0.has_key(ion):
                 if self.DEBUG:
-                    print("Calculating nonresonant scattering amplitude for %s"%element)
-                self.f0[element] = self.f0func[element].dictcall(self.subs)
+                    print("Calculating nonresonant scattering amplitude for %s"%ion)
+                if not ion in self.f0func:
+                    self.f0func[ion] = makefunc(calc_f0(ion, self.Gc.norm()), sp)
+                self.f0[ion] = self.f0func[ion].dictcall(self.subs)
             
-            f[ffsymbol] = f1f2[label] + float(self.f0[element])
+            f[ffsymbol] = f1f2[label] + float(self.f0[ion])
         
         
         if DD or DQ:
             if miller==None and hasattr(self, "E"):
                 pass
             else:
+                self.calc_structure_factor(miller, DD=DD, DQ=DQ, Temp=Temp,
+                                           subs=subs, evaluate=subs)
                 self.calc_scattered_amplitude(simplify=simplify, DD=DD, DQ=DQ,
                                               subs=subs)
             Feval = self.E[channel]
@@ -1230,7 +1266,14 @@ class unit_cell(object):
             f[self.energy] = energy
             f[self.S["psi"]] = psi
         else:
-            Feval = self.F_0.subs(self.subs).n()
+            if self.F_0.atoms(sp.Symbol).issuperset(self.miller) or miller==None:
+                if miller==None:
+                    miller = [self.subs[i] for i in self.miller]
+            else:
+                self.calc_structure_factor(miller, DD=DD, DQ=DQ, Temp=Temp,
+                                           subs=subs, evaluate=subs)
+            #subit = self.subs.iteritems()
+            Feval = self.F_0.subs(self.subs.iteritems()).n().expand() # self.F_0.subs(self.subs).n().expand()
         
         if simplify:
             Feval = Feval.simplify()
@@ -1243,6 +1286,43 @@ class unit_cell(object):
             return F0_func
         else:
             return F0_func.dictcall(f)
+    
+    
+    
+    def get_equivalent_vectors(self, v):
+        return set([tuple(G[:,:3].T.dot(v)) for G in self.generators])
+    
+    
+    def iter_rec_space(self, qmax, independent=True):
+        """
+        
+            Returns an iterator over all Bragg reflections of the structures 
+            as 3-tuples. The maximum value 2*sin(theta)/lambda is defined by
+            qmax. If `independent` is True, only those reflections will be 
+            included that are symetrically inequivalent.
+        
+        """
+        qmax = abs(qmax)
+        hmax = int(self.subs[self.a] * qmax)
+        kmax = int(self.subs[self.b] * qmax)
+        lmax = int(self.subs[self.c] * qmax)
+        hind = xrange(hmax, -hmax-1, -1)
+        kind = xrange(kmax, -kmax-1, -1)
+        lind = xrange(lmax, -lmax-1, -1)
+        iter1 = itertools.product(hind, kind, lind)
+        self._Rdone = set()
+        kwargs = self.subs.copy()
+        def helper(v):
+            kwargs.update(zip(self.miller, v))
+            if v in self._Rdone:
+                return False
+            if self.qfunc.dictcall(kwargs) > qmax:
+                return False
+            if independent:
+                self._Rdone.update(self.get_equivalent_vectors(v))
+            return True
+        return itertools.ifilter(lambda v: helper(v), iter1)
+        
     
     
     def simplify(self): # a longshot
@@ -1265,11 +1345,14 @@ class unit_cell(object):
         else:
             energy = float(self.subs[self.energy])
         self.d = 1./self.qfunc.dictcall(self.subs)
-        for label in self.AU_formfactors.iterkeys():
+        for label in self.AU_formfactors:
             ffsymbol = self.AU_formfactors[label]
             element = self.elements[label]
+            ion = self.get_ion(label)
             Z = elements.Z[element]
-            f0 = self.f0func[element].dictcall(self.subs)
+            if not self.f0func.has_key(ion):
+                self.f0func[ion] = makefunc(calc_f0(ion, self.Gc.norm()), sp)
+            f0 = self.f0func[ion].dictcall(self.subs)
             if ffsymbol.name.endswith("_0"):
                 self.subs[ffsymbol] = f0
             else:
@@ -1282,7 +1365,7 @@ class unit_cell(object):
 
         self.I = dict()
         self.AAS = dict()
-        for pol in self.E.iterkeys():
+        for pol in self.E:
             channel = self.E[pol].expand()
             channel = channel.subs(self.subs)
             #channel = channel.trigsimp()
@@ -1305,7 +1388,7 @@ class unit_cell(object):
         self.transform_structure_factor(AAS=False)
         
         done = []
-        for label in self.AU_formfactors.iterkeys():
+        for label in self.AU_formfactors:
             ffsymbol = self.AU_formfactors[label]
             element = self.elements[label]
             if equivalent:
@@ -1320,7 +1403,10 @@ class unit_cell(object):
             if self.DEBUG:
                 print("Calculating nonresonant f_0 for %s..." %ffsymbol.name)
             Z = elements.Z[element]
-            f0 = self.f0func[element].dictcall(self.subs)
+            ion = self.get_ion(label)
+            if not self.f0func.has_key(ion):
+                self.f0func[ion] = makefunc(calc_f0(ion, self.Gc.norm()), sp)
+            f0 = self.f0func[ion].dictcall(self.subs)
 
             if ffsymbol.name.endswith("_0"):
                 self.subs[ffsymbol] = f0

@@ -21,22 +21,45 @@ def add_layer(cs, label, zoffset=0):
         cs.add_atom(label, (x,y,z))
 
 
-def get_cs(stack = None):
+def get_cs(stack = None, AAS=True):
     import pyasf
     sp = pyasf.sp
     if stack==None:
-        cs = pyasf.unit_cell(ciffile, resonant="Ho")
+        if AAS:
+            cs = pyasf.unit_cell(ciffile, resonant="Ho")
+        else:
+            cs = pyasf.unit_cell(ciffile)
+        fac = 1
     else:
         cs = pyasf.unit_cell(1)
         for i in range(len(stack)):
             add_layer(cs, stack[i], float(i)/len(stack))
+        fac = 1./8*len(stack)
         
-        cs.subs[cs.a] = 8.1
-        cs.subs[cs.b] = 8.1
-        cs.subs[cs.c] = 32.0/8*len(stack)
-        cs.subs[cs.alpha] = sp.pi/2
-        cs.subs[cs.beta] = sp.pi/2
-        cs.subs[cs.gamma] = 2*sp.pi/3
+    
+    cs.subs[cs.a] = 8.1
+    cs.subs[cs.b] = 8.1
+    cs.subs[cs.c] = 32.0 * fac
+    cs.subs[cs.alpha] = sp.pi/2
+    cs.subs[cs.beta] = sp.pi/2
+    cs.subs[cs.gamma] = 2*sp.pi/3
+    
+    for label in cs.AU_formfactorsDD:
+        pyasf.applymethod(cs.AU_formfactorsDD[label], "subs", cs.subs)
+        pyasf.applymethod(cs.AU_formfactorsDQ[label], "subs", cs.subs)
+        #pyasf.applymethod(cs.AU_formfactorsDDc[label], "subs", cs.subs)
+        #pyasf.applymethod(cs.AU_formfactorsDQc[label], "subs", cs.subs)
+    
+    
+    s = cs.subs.copy()
+    [s.pop(k) for k in cs.miller]
+    
+    cs.Gc = cs.Gc.subs(s)
+    cs.M = cs.M.subs(cs.subs)
+    cs.M0 = cs.M0.subs(cs.subs)
+    cs.Minv = cs.Minv.subs(cs.subs)
+    cs.M0inv = cs.M0inv.subs(cs.subs)
+
     
     cs.build_unit_cell()
     return cs
