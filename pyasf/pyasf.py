@@ -319,7 +319,7 @@ class unit_cell(object):
             self.charges[label] = int(charge)
         
         ion = self.get_ion(label)
-        if not self.f0func.has_key(ion):
+        if not ion in self.f0func:
             self.f0func[ion] = makefunc(calc_f0(ion, self.Gc.norm()), sp)
         self.occupancy[label] = occupancy
         if assume_complex:
@@ -532,7 +532,7 @@ class unit_cell(object):
         element_pos = {}
         for label in self.AU_positions.keys():
             element = self.elements[label]
-            if element_pos.has_key(element):
+            if element in element_pos:
                 element_pos[element].append(self.AU_positions[label])
             else:
                 element_pos[element] = [self.AU_positions[label]]
@@ -661,18 +661,18 @@ class unit_cell(object):
                 new_position = W.dot(positions[name]) + w
                 new_position = new_position%1
                 positions[name] = new_position
-                if formfactorsDD.has_key(name):
+                if name in formfactorsDD:
                     formfactorsDD[name] = full_transform(W, formfactorsDD[name])
-                if formfactorsDQ.has_key(name):
+                if name in formfactorsDQ:
                     formfactorsDQ[name] = full_transform(W, formfactorsDQ[name])
             else:
                 for i in range(len(positions[name])):
                     new_position = W.cot(positions[name][i]) + w
                     new_position = new_position%1
                     positions[name][i] = new_position
-                    if formfactorsDD.has_key(name):
+                    if name in formfactorsDD:
                         formfactorsDD[name][i] = full_transform(W, formfactorsDD[name][i])
-                    if formfactorsDQ.has_key(name):
+                    if name in formfactorsDQ:
                         formfactorsDQ[name][i] = full_transform(W, formfactorsDQ[name][i])
     
     def build_unit_cell(self):
@@ -769,16 +769,16 @@ class unit_cell(object):
             else:
                 DW = 1
             o = self.occupancy[Atom]
-            if self.formfactors.has_key(Atom):
+            if Atom in self.formfactors:
                 for i, f in enumerate(self.formfactors[Atom]):
                     r = self.positions[Atom][i]
                     if self.DEBUG: print r, G.dot(r)
                     self.F_0 += o * f * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
-            if self.formfactorsDD.has_key(Atom) and DD:
+            if Atom in self.formfactorsDD and DD:
                 for i, f in enumerate(self.formfactorsDD[Atom]):
                     r = self.positions[Atom][i]
                     self.F_DD += o * f * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
-            if self.formfactorsDQ.has_key(Atom) and DQ:
+            if Atom in self.formfactorsDQ and DQ:
                 for i, f_in in enumerate(self.formfactorsDQ[Atom]):
                     r = self.positions[Atom][i]
                     f_sc = - f_in.copy().transpose(0,2,1)
@@ -1190,7 +1190,7 @@ class unit_cell(object):
     
     
     
-    def DAFS(self, energy, miller=None, DD=False, DQ=False, Temp=True, psi=0,
+    def DAFS(self, energy, miller, DD=False, DQ=False, Temp=True, psi=0,
              func_output=False, fwhm_ev=0.25, table="Sasaki", channel="ss",
              simplify=True, subs=True):
         """
@@ -1216,9 +1216,12 @@ class unit_cell(object):
             self.calc_structure_factor(miller, DD=DD, DQ=DQ, Temp=Temp,
                                                subs=subs, evaluate=subs)
         
-        if miller!=None and len(miller)==3:
-            self.subs.update(zip(self.miller, miller))
-            self.f0.clear()
+        miller = tuple(map(int, miller))
+        assert len(miller)==3, "Input for `miller` index must be 3-tuple of int"
+        
+        oldmiller = tuple([self.subs[ind] for ind in self.miller])
+        self.subs.update(zip(self.miller, miller))
+        self.f0.clear()
         
         if not isinstance(energy, np.ndarray):
             energy = np.array(energy, dtype=float, ndmin=1)
@@ -1230,7 +1233,7 @@ class unit_cell(object):
         for label in self.AU_formfactors:
             ffsymbol = self.AU_formfactors[label]
             ion = self.get_ion(label)
-            if not self.f0.has_key(ion):
+            if not ion in self.f0:
                 if self.DEBUG:
                     print("Calculating nonresonant scattering amplitude for %s"%ion)
                 if not ion in self.f0func:
@@ -1241,7 +1244,7 @@ class unit_cell(object):
         
         
         if DD or DQ:
-            if miller==None and hasattr(self, "E"):
+            if hasattr(self, "E") and miller==oldmiller:
                 pass
             else:
                 self.calc_structure_factor(miller, DD=DD, DQ=DQ, Temp=Temp,
@@ -1266,9 +1269,8 @@ class unit_cell(object):
             f[self.energy] = energy
             f[self.S["psi"]] = psi
         else:
-            if self.F_0.atoms(sp.Symbol).issuperset(self.miller) or miller==None:
-                if miller==None:
-                    miller = [self.subs[i] for i in self.miller]
+            if self.F_0.atoms(sp.Symbol).issuperset(self.miller) or miller==oldmiller:
+                pass
             else:
                 self.calc_structure_factor(miller, DD=DD, DQ=DQ, Temp=Temp,
                                            subs=subs, evaluate=subs)
@@ -1350,7 +1352,7 @@ class unit_cell(object):
             element = self.elements[label]
             ion = self.get_ion(label)
             Z = elements.Z[element]
-            if not self.f0func.has_key(ion):
+            if not ion in self.f0func:
                 self.f0func[ion] = makefunc(calc_f0(ion, self.Gc.norm()), sp)
             f0 = self.f0func[ion].dictcall(self.subs)
             if ffsymbol.name.endswith("_0"):
@@ -1404,7 +1406,7 @@ class unit_cell(object):
                 print("Calculating nonresonant f_0 for %s..." %ffsymbol.name)
             Z = elements.Z[element]
             ion = self.get_ion(label)
-            if not self.f0func.has_key(ion):
+            if not ion in self.f0func:
                 self.f0func[ion] = makefunc(calc_f0(ion, self.Gc.norm()), sp)
             f0 = self.f0func[ion].dictcall(self.subs)
 
@@ -1432,13 +1434,13 @@ class unit_cell(object):
             incident beam and the surface and psi is the azimuthal position.
         """
         if energy==None:
-            if self.subs.has_key(self.energy):
+            if self.energy in self.subs:
                 self.subs.pop(self.energy)
         else:
             self.subs[self.energy] = energy
         miller = list(sp.symbols("h,k,l", integer=True))
         for i in range(3):
-            if kwargs.has_key(miller[i].name):
+            if miller[i].name in kwargs:
                 miller[i] = kwargs[miller[i].name]
         
         psi2 = sp.Symbol("psi_2", real=True)
@@ -1485,7 +1487,7 @@ class unit_cell(object):
             and at a given energy.
         """
         if energy==None:
-            if self.subs.has_key(self.energy):
+            if self.energy in self.subs:
                 self.subs.pop(self.energy)
         else:
             self.subs[self.energy] = energy
