@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """
     Module provides symbolical calculation of the anisotropic Structure Factor
     of a Crystal of given Space Group and Asymmetric Unit up to
@@ -58,6 +57,15 @@ def translate_fdmnes(names):
     return names
 
 
+
+# Future:
+#class Atom(object):
+#    def __init__(self, label, isotropic=True, edge_shift=0, occupancy=1, charge=None, assume_complex=True):
+#        self.label = label
+#        self.charge = charge
+#        self._isotropic = isotropic
+
+
 class _named2darray(np.ndarray):
     def set_fields(self, fields):
         if len(fields) != self.shape[1]:
@@ -83,6 +91,7 @@ class _named2darray(np.ndarray):
             if all([k in self._fields for k in key]):
                 key = Ellipsis, [self._fields.index(k) for k in key]
         return super(_named2darray, self).__setitem__(key, val)
+
 
 def named2darray(array, fields):
     assert array.ndim == 2, "Number of dimensions should be 2"
@@ -168,6 +177,8 @@ class unit_cell(object):
     electron_radius = 2.8179403e-15 # meters
     avogadro = 6.022142e23
     eV_A = 12398.42
+    boltzmann = 1.380658e-23
+    hbar = 1.054571628e-34 
     
     DEBUG = False
     def __init__(self, structure, resonant="", **kwargs):
@@ -207,14 +218,18 @@ class unit_cell(object):
         self.energy = sp.Symbol("epsilon", real=True)
         self.subs.update(dict(zip(self.miller, self.miller)))
         self.S = dict([(s.name, s) for s in self.miller]) # dictionary of all symbols
+        self.S["q"] = sp.Symbol("q", real=True)
         self.elements = {}
         self.U = collections.defaultdict(lambda: sp.zeros(3)) # dictionary of anisotropic mean square displacement
         self.dE = dict() # dictionary of edge shifts
         self.f0func = dict()
         self.feff_func = dict()
+        self.f = dict()
         self.f0 = dict()
         self.occupancy = dict()
         self.charges = collections.defaultdict(int)
+        self.masses = dict()
+        self.omegaE = dict()
         
         if str(structure).isdigit():
             structure = int(structure)
@@ -320,7 +335,7 @@ class unit_cell(object):
         
         ion = self.get_ion(label)
         if not ion in self.f0func:
-            self.f0func[ion] = makefunc(calc_f0(ion, self.Gc.norm()), sp)
+            self.f0func[ion] = makefunc(calc_f0(ion, self.S["q"]), np.math) #calc_f0(ion, self.S["q"])
         self.occupancy[label] = occupancy
         if assume_complex:
             my_ff_args = dict({"complex":True})
@@ -444,12 +459,16 @@ class unit_cell(object):
         
         def getcoord(cifline):
             coord = mkfloat(cifline)
+            if max_denominator==None:
+                return coord
             coord = Fraction(coord)
             coord = coord.limit_denominator(max_denominator)
             return coord
         
         def getangle(cifline):
             ang = mkfloat(cif[cifline])/180
+            if max_denominator==None:
+                return coord
             ang = Fraction("%.15f"%ang)
             ang = sp.S(ang.limit_denominator(max_denominator)) * sp.pi
             return ang
@@ -685,6 +704,8 @@ class unit_cell(object):
         self.formfactors = collections.defaultdict(list)
         self.formfactorsDD = collections.defaultdict(list)
         self.formfactorsDQ = collections.defaultdict(list)
+        self._positions = []
+        self._labels = []
         for label in self.AU_positions.keys():
             for generator in self.generators:
                 W = generator[:,:3]
@@ -705,10 +726,35 @@ class unit_cell(object):
                     if label in self.AU_formfactorsDQ:
                         self.formfactorsDQ[label].append(full_transform(W, self.AU_formfactorsDQ[label]))
                     self.positions[label].append(new_position)
+                    self._positions.append(new_position)
+                    self._labels.append(label)
                     self.multiplicity[label] += 1
         # rough estimate of the infimum of the distance of atoms:
+        self._positions = np.vstack(self._positions)
+        self._labels = np.array(self._labels)
         self.numato = sum(self.multiplicity.values())
         self.mindist = 1./self.numato**(1./3)/1000.
+    
+    
+    def get_nearest_neighbors(self, label, num=1):
+        num = int(num)
+        if not num > 0:
+            return
+        
+        pos = self.AU_positions[label].astype(float)
+        diff = (pos - self._positions.astype(float))%1
+        diff = np.vstack([diff, diff-np.array((0,0,1))])
+        diff = np.vstack([diff, diff-np.array((0,1,0))])
+        diff = np.vstack([diff, diff-np.array((1,0,0))])
+        
+        #diff =  (diff+0.5)%1-0.5
+        M = np.array(self.M.subs(self.subs).n()).astype(float)
+        self._diff = diff = diff.dot(M.T)
+        #self._dist = dist = np.sqrt((diff**2).sum(1))
+        self._dist = dist = np.linalg.norm(diff, axis=1)
+        ind = dist.argsort()
+        indlbl = ind%len(self._labels)
+        return self._labels[indlbl[1:num+1]], dist[ind[1:num+1]]
     
     
     def get_density(self):
@@ -756,6 +802,8 @@ class unit_cell(object):
         G = self.G.subs(self.subs)
         Gc = self.Gc.subs(self.subs)
         self.F_0 = sp.S(0)
+        DD = DD and len(self.formfactorsDD)>0
+        DD = DQ and len(self.formfactorsDQ)>0
         if DD:
             self.F_DD = np.zeros((3,3), object)
         if DQ:
@@ -764,7 +812,7 @@ class unit_cell(object):
         for Atom in self.positions: # get position, formfactor and symmetry if DQ tensor
             if Temp:
                 if isinstance(Temp, bool):
-                    Temp = float(Temp)
+                    Temp = int(Temp)
                 DW = sp.exp(-2*sp.pi**2 * Temp * Gc.dot(self.U[Atom].dot(Gc)))
             else:
                 DW = 1
@@ -774,11 +822,11 @@ class unit_cell(object):
                     r = self.positions[Atom][i]
                     if self.DEBUG: print r, G.dot(r)
                     self.F_0 += o * f * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
-            if Atom in self.formfactorsDD and DD:
+            if DD and Atom in self.formfactorsDD:
                 for i, f in enumerate(self.formfactorsDD[Atom]):
                     r = self.positions[Atom][i]
                     self.F_DD += o * f * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
-            if Atom in self.formfactorsDQ and DQ:
+            if DQ and Atom in self.formfactorsDQ:
                 for i, f_in in enumerate(self.formfactorsDQ[Atom]):
                     r = self.positions[Atom][i]
                     f_sc = - f_in.copy().transpose(0,2,1)
@@ -786,11 +834,16 @@ class unit_cell(object):
                     #self.F_DQ += o * (f_in - f_out) * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
                     self.F_DQin += o * f_in * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
                     self.F_DQsc += o * f_sc * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
-                    
+        
         self.q = self.qfunc.dictcall(self.subs)
         self.d = 1/self.q
         self.theta = sp.asin(12398./(2*self.d*self.energy))
-        self.F_0 = self.F_0.expand()
+        if evaluate:
+            self.F_0 = self.F_0.n().expand()
+        if self.F_0.atoms(sp.Symbol):
+            self.F_0_func = makefunc(self.F_0)
+        else:
+            self.F_0_func = None
         # simplify:
             
         if DD:
@@ -1025,7 +1078,7 @@ class unit_cell(object):
     def get_f1f2_isotropic(self, energy, fwhm_ev=1e-4, table="Sasaki"):
         isort = energy.argsort()
         emin, emax = energy[isort[[0, -1]]]
-        atoms = list(self.positions)
+        atoms = list(self.AU_positions)
         if not hasattr(self, "_ftab") or \
            not set(self._ftab.atoms).issuperset(atoms) or \
            emin < self._ftab.x[0] or \
@@ -1192,7 +1245,7 @@ class unit_cell(object):
     
     def DAFS(self, energy, miller, DD=False, DQ=False, Temp=True, psi=0,
              func_output=False, fwhm_ev=0.25, table="Sasaki", channel="ss",
-             simplify=True, subs=True):
+             simplify=True, subs=True, force_refresh=True):
         """
             Calculates a Diffraction Anomalous Fine Structure (DAFS) curve for
             a given array of energies and a certain Bragg reflection hkl
@@ -1219,30 +1272,22 @@ class unit_cell(object):
         miller = tuple(map(int, miller))
         assert len(miller)==3, "Input for `miller` index must be 3-tuple of int"
         
-        oldmiller = tuple([self.subs[ind] for ind in self.miller])
+        oldmiller = self.hkl()
+        
         self.subs.update(zip(self.miller, miller))
-        self.f0.clear()
+        
+        self.f.clear()
+        f = self.f
         
         if not isinstance(energy, np.ndarray):
             energy = np.array(energy, dtype=float, ndmin=1)
         
+        ### get dispersion correction:
         f1f2 = self.get_f1f2_isotropic(energy, fwhm_ev, table)
         
-        self.f = f = {}
-        
-        for label in self.AU_formfactors:
-            ffsymbol = self.AU_formfactors[label]
-            ion = self.get_ion(label)
-            if not ion in self.f0:
-                if self.DEBUG:
-                    print("Calculating nonresonant scattering amplitude for %s"%ion)
-                if not ion in self.f0func:
-                    self.f0func[ion] = makefunc(calc_f0(ion, self.Gc.norm()), sp)
-                self.f0[ion] = self.f0func[ion].dictcall(self.subs)
-            
-            f[ffsymbol] = f1f2[label] + float(self.f0[ion])
         
         
+        ### get structure factor:
         if DD or DQ:
             if hasattr(self, "E") and miller==oldmiller:
                 pass
@@ -1269,20 +1314,45 @@ class unit_cell(object):
             f[self.energy] = energy
             f[self.S["psi"]] = psi
         else:
-            if self.F_0.atoms(sp.Symbol).issuperset(self.miller) or miller==oldmiller:
-                pass
+            if hasattr(self, "F_0") and \
+               (self.F_0.atoms(sp.Symbol).issuperset(self.miller) or miller==oldmiller) and not \
+               force_refresh:
+                if self.DEBUG:
+                    print("Using cached SF")
             else:
                 self.calc_structure_factor(miller, DD=DD, DQ=DQ, Temp=Temp,
                                            subs=subs, evaluate=subs)
-            #subit = self.subs.iteritems()
-            Feval = self.F_0.subs(self.subs.iteritems()).n().expand() # self.F_0.subs(self.subs).n().expand()
+                #subit = self.subs.iteritems()
+                Feval = self.F_0.subs(self.subs.iteritems()).n().expand() # self.F_0.subs(self.subs).n().expand()
         
-        if simplify:
-            Feval = Feval.simplify()
+        
+        
+        q = self.qfunc.dictcall(self.subs) # 80us
+        if self.f0.get("__q__") != q:
+            self.f0.clear()
+            self.f0["__q__"] = q
+        for label in self.AU_formfactors:
+            ffsymbol = self.AU_formfactors[label]
+            ion = self.get_ion(label)
+            if not ion in self.f0:
+                if self.DEBUG:
+                    print("Calculating nonresonant scattering amplitude for %s"%ion)
+                self.f0[ion] = self.f0func[ion](q)
             
-        self.Feval = Feval
+            f[ffsymbol] = f1f2[label] + self.f0[ion]
         
-        F0_func = makefunc(Feval)
+        
+        
+        if self.F_0_func != None:
+            F0_func = self.F_0_func
+            f.update(self.subs)
+        else:
+            if simplify:
+                Feval = Feval.simplify()
+            self.Feval = Feval
+            if len(energy)==1 and not func_output:
+                return Feval.subs([(k,v.item()) for k,v in f.iteritems()])
+            F0_func = makefunc(Feval)
         
         if func_output:
             return F0_func
@@ -1326,6 +1396,65 @@ class unit_cell(object):
         return itertools.ifilter(lambda v: helper(v), iter1)
         
     
+    def set_msd_from_einstein(self, label, temperature, omegaE=None, mass=None):
+        """
+            Sets the isotropic mean square displacement (unit_cell.U) of an 
+            atom according to the Einstein model and a given temperature.
+            If the mass is not given, it is taken from the database.
+            
+            Inputs:
+                label : str
+                    the label of the atom
+                temperature : float
+                    the temperature in kelvin
+                omegaE : float
+                    the characteristic frequency in terms of the Einstein 
+                    model
+                mass : float (optional)
+                    the mass of the atom in atomic mass units
+            
+            Returns:
+                The isotropic mean square displacement in Angstrom^2
+        """
+        if not label in self.elements:
+            raise ValueError("Atom labelled `%s` not found in unit_cell"%label)
+        # http://dx.doi.org/10.1107/S0108767308031437
+        element = self.elements[label]
+        if mass != None:
+            self.masses[element] = mass
+        elif not element in self.masses:
+            import rexs.xray.interactions as xi
+            self.masses[element] = xi.get_element(element)[1]
+        
+        if omegaE==None:
+            omegaE = self.omegaE[label]
+        
+        m = self.masses[element]
+        msd =  self.hbar/(2 * m * self.u * omegaE ) \
+               / np.tanh(self.hbar * omegaE / (2*self.boltzmann*temperature)) \
+               *1e10**2
+        self.U[label] = sp.eye(3) * msd
+        self.omegaE[label] = omegaE
+        return msd
+
+    def set_temperature(self, temperature):
+        """
+            Sets the isotropic mean square displacement (unit_cell.U) of ech
+            atom according to the Einstein model and a given temperature.
+            
+            Before using it, the characteristic frequency in the einstein 
+            model needs to be given via the unit_cell.set_msd_from_einstein
+            method.
+            
+            Inputs:
+                temperature : float
+                    the temperature in kelvin
+        """
+        omegaE = [(label,self.omegaE[label]) for label in self.elements]
+        for label, omega in omegaE:
+            self.set_msd_from_einstein(label, temperature, omega)
+    
+    
     
     def simplify(self): # a longshot
         if not hasattr(self, "E"): return
@@ -1347,14 +1476,13 @@ class unit_cell(object):
         else:
             energy = float(self.subs[self.energy])
         self.d = 1./self.qfunc.dictcall(self.subs)
+        q = self.qfunc.dictcall(self.subs) # 80us
         for label in self.AU_formfactors:
             ffsymbol = self.AU_formfactors[label]
             element = self.elements[label]
             ion = self.get_ion(label)
             Z = elements.Z[element]
-            if not ion in self.f0func:
-                self.f0func[ion] = makefunc(calc_f0(ion, self.Gc.norm()), sp)
-            f0 = self.f0func[ion].dictcall(self.subs)
+            f0 = self.f0func[ion](q)
             if ffsymbol.name.endswith("_0"):
                 self.subs[ffsymbol] = f0
             else:
@@ -1390,6 +1518,7 @@ class unit_cell(object):
         self.transform_structure_factor(AAS=False)
         
         done = []
+        q = self.qfunc.dictcall(self.subs) # 80us
         for label in self.AU_formfactors:
             ffsymbol = self.AU_formfactors[label]
             element = self.elements[label]
@@ -1406,9 +1535,7 @@ class unit_cell(object):
                 print("Calculating nonresonant f_0 for %s..." %ffsymbol.name)
             Z = elements.Z[element]
             ion = self.get_ion(label)
-            if not ion in self.f0func:
-                self.f0func[ion] = makefunc(calc_f0(ion, self.Gc.norm()), sp)
-            f0 = self.f0func[ion].dictcall(self.subs)
+            f0 = self.f0func[ion](q)
 
             if ffsymbol.name.endswith("_0"):
                 self.subs[ffsymbol] = f0
