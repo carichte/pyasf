@@ -2,7 +2,8 @@ import os
 sum_formula = "SrTiO3"
 density = 5.13
 SpaceGroup = 221
-ciffile = "cif/STO_CollCode80873.cif"
+#ciffile = "cif/STO_CollCode80873.cif"
+ciffile = "cif/STO_aniso_80873.cif"
 
 ciffile = os.path.join(os.path.split(__file__)[0], ciffile)
 

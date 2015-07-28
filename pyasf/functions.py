@@ -197,13 +197,13 @@ def gcd(*args):
 
 
 def stay_in_UC(coordinate):
-    if [i.is_Symbol for i in coordinate.atoms()].count(True) > 0: return coordinate
+    if coordinate.has(sp.Symbol): return coordinate
     else: return coordinate%1
     
 
 @sp.vectorize(0)
 def hassymb(x):
-    return [i.is_Symbol for i in x.atoms()].count(True) > 0
+    return x.has(sp.Symbol)
 
 def full_transform_old(Matrix, Tensor):
     """
@@ -245,7 +245,7 @@ def get_cell_parameters(sg, sgsym = None):
             Returns the general cell parameters for a lattice of given space group number sg.
         """
         import sympy as sp
-        a, b, c, alpha, beta, gamma = sp.symbols("a, b, c, alpha, beta, gamma")
+        a, b, c, alpha, beta, gamma = sp.symbols("a, b, c, alpha, beta, gamma", real=True, positive=True, finite=True)
         
         if sg in range(1,3): 
             system = "Triclinic"

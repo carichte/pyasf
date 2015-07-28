@@ -105,7 +105,7 @@ def named2darray(array, fields):
 
 
 def makefunc(expr, mathmodule = "numpy"):
-    symbols = filter(lambda x: x.is_Symbol, expr.atoms())
+    symbols = list(expr.atoms(sp.Symbol))
     symbols.sort(key=str)
     func = lambdify(symbols, expr, mathmodule, dummify=False)
     func.kw = symbols
@@ -206,7 +206,6 @@ class unit_cell(object):
                                 - path to .cif-file
         """
         self.sg_sym = None
-        self.symmetries = {}
         self.AU_positions = {} # only asymmetric unit
         self.AU_formfactors = {} # only asymmetric unit, isotropic
         self.AU_formfactorsDD = {} # only asymmetric unit, pure dipolar
@@ -215,12 +214,15 @@ class unit_cell(object):
         self.AU_formfactorsDQc = {} # only asymmetric unit, dipolar-quadrupolar interference, cartesian
         self.miller = sp.symbols("h k l", integer=True)
         self.subs = {}
+        self.subs_U = {}
         self.energy = sp.Symbol("epsilon", real=True)
         self.subs.update(dict(zip(self.miller, self.miller)))
         self.S = dict([(s.name, s) for s in self.miller]) # dictionary of all symbols
         self.S["q"] = sp.Symbol("q", real=True)
         self.elements = {}
-        self.U = collections.defaultdict(lambda: sp.zeros(3)) # dictionary of anisotropic mean square displacement
+        self.Uiso = collections.defaultdict(int)
+        self.Uaniso = {}
+        self.U = dict() # dictionary of anisotropic mean square displacement
         self.dE = dict() # dictionary of edge shifts
         self.f0func = dict()
         self.feff_func = dict()
@@ -275,7 +277,7 @@ class unit_cell(object):
         self.metric_tensor_0 = self.metric_tensor.subs(dsub)#.subs(self.subs)
         self.metric_tensor_inv_0 = self.metric_tensor_inv.subs(dsub)#.subs(self.subs)
         self.G = sp.Matrix(self.miller)
-        # G is a vector in reciprocal space -> dual space
+        # G is a vector in reciprocal space -> dual space, covariant
         # To transform it to cartesian space:
         # Gc = M * metric_tensor_inv * G
         #    = Minv.T * G 
@@ -335,8 +337,20 @@ class unit_cell(object):
         
         ion = self.get_ion(label)
         if not ion in self.f0func:
-            self.f0func[ion] = makefunc(calc_f0(ion, self.S["q"]), np.math) #calc_f0(ion, self.S["q"])
+            # better agains sympy here? does it really make sense to have different q values for one reflection?
+            self.f0func[ion] = makefunc(calc_f0(ion, self.S["q"]), "math")
         self.occupancy[label] = occupancy
+        
+        ind = xrange(3)
+        U = sp.zeros(3,3)
+        for i,j in itertools.product(ind, ind):
+            if i<=j: 
+                Sym = sp.Symbol("U_%s_%i%i"%(label, i+1, j+1), real=True)
+                self.S[Sym.name] = Sym
+                U[i,j] = U[j,i] = Sym
+        self.U[label] = U
+        
+        ### FORM FACTORS:
         if assume_complex:
             my_ff_args = dict({"complex":True})
         else:
@@ -354,7 +368,6 @@ class unit_cell(object):
             self.S[Sym.name] = Sym
             self.AU_formfactors[label] = Sym
             f_DD = np.zeros((3,3), dtype=object)
-            ind = range(3)
             for i,j in itertools.product(ind, ind):
                 if i<=j: 
                     Sym = sp.Symbol("f_%s_dd_%i%i"%(label, i+1, j+1), **my_ff_args)
@@ -365,9 +378,9 @@ class unit_cell(object):
             applymethod(f_DD, "simplify")
             
             ######### Transformation to lattice units:
-            # M transforms vector from crystal units in direct space 
+            # M transforms vector from crystal units in direct space
             # to the cartesian system. Minv does the opposite.
-            # M0 transforms the tensor from cartesian system to direct
+            # M0 transforms the tensor from cartesian system to
             # crystal units allowing us to apply symmetry from ITC:
             self.AU_formfactorsDD[label] = full_transform(self.M0, f_DD)
             # transformation to lattice units:
@@ -516,7 +529,7 @@ class unit_cell(object):
             else:
                 iso = 0
             
-            self.U[label] = sp.eye(3) * iso
+            self.Uiso[label] = iso
             self.add_atom(label, position, isotropic, assume_complex=True, 
                           occupancy=occ, charge=charge)
         
@@ -526,6 +539,7 @@ class unit_cell(object):
                 loop[key.lower()] = loop[key]
             for num, line in enumerate(loop):
                 label = line._atom_site_aniso_label
+                self.Uaniso[label] = Uaniso = sp.zeros(3,3)
                 for (i,j) in [(1,1), (1,2), (1,3), (2,2), (2,3), (3,3)]:
                     kw_U = "_atom_site_aniso_u_%i%i"%(i,j)
                     kw_B = "_atom_site_aniso_b_%i%i"%(i,j)
@@ -540,8 +554,8 @@ class unit_cell(object):
                         value /= self.metric_tensor_inv[i-1,j-1] / 4.
                         value = value.subs(self.subs)
                         value /= 8. * np.pi**2
-                    self.U[label][i-1,j-1] = self.U[label][j-1,i-1] = value
-
+                    Uaniso[i-1,j-1] = Uaniso[j-1,i-1] = value
+    
     
     
     def find_symmetry(self, start_sg=230):
@@ -590,61 +604,89 @@ class unit_cell(object):
             Applies Site Symmetries of the Space Group to the Scattering Tensors.
         """
         if labels == None:
-            labels = self.AU_formfactorsDD.keys()
-        self.equations={}
+            labels = self.U.iterkeys()
+        self._equations = {}
+        self._symmetries = {}
+        self._Usymmetries = {}
+        self._Uequations = {}
+        M_r = sp.Matrix([self.ar, self.br, self.cr])
+        M_r = M_r * M_r.T
         for label in labels:
             equations = set()
+            Uequations = set()
+            U = self.U[label]
+            Beta = U.multiply_elementwise(M_r)
+            position = self.AU_positions[label]
             for generator in self.generators:
-                W = generator[:,:3]
+                W = sp.Matrix(generator[:,:3])
                 w = generator[:,3].ravel()
                 if self.DEBUG: print w, W
-                new_position = W.dot(self.AU_positions[label]) + w
+                new_position = W.dot(position) + w
                 new_position = np.array([stay_in_UC(i) for i in new_position])
                 if self.DEBUG: print new_position
                 #if (new_position == self.AU_positions[label]).all(): #1.8.13
-                dist = ((new_position - self.AU_positions[label])**2).sum()
+                dist = ((new_position - position)**2).sum()
                 if dist < self.eps:
-                    # incident polarization is covariant 
+                    # International Tables for Crystallography (2006). Vol. D, ch. 1.1, pp. 3-33
+                    # incident polarization is contravariant => f is 2 times covariant
                     # -> first axis in DD
                     # -> second axis in DQ
+                    # W rotates position to new position
+                    # -> that is the same as rotating polarization by W.inv
+                    # -> To get representation of rotated tensor:
+                    #     - rotate contracting Vectors (polarization) in opposite W.inv
+                    #     ==> Transform Tensor with Rotation W
                     
-                    fDD = self.AU_formfactorsDD[label]
-                    fDQ = self.AU_formfactorsDQ[label]
-                    #fDD = self.AU_formfactorsDD[label]
-                    #fDQ = self.AU_formfactorsDQ[label].transpose(1,0,2)
+                    if label in self.AU_formfactorsDD:
+                        fDD = self.AU_formfactorsDD[label]
+                        new_DD = full_transform(W, fDD)
+                        equations.update((fDD - new_DD).ravel())
                     
-                    #fDDc = np.tensordot(self.metric_tensor_0, fDD, (1,0))
-                    #fDQc = np.tensordot(self.metric_tensor_0, fDQ, (1,0))
-                    #fDD = np.tensordot(self.metric_tensor_0, fDD, (1,0))
-                    #fDQ = np.tensordot(self.metric_tensor_0, fDQ, (1,0))
+                    if label in self.AU_formfactorsDQ:
+                        fDQ = self.AU_formfactorsDQ[label]
+                        new_DQ = full_transform(W, fDQ)
+                        equations.update((fDQ - new_DQ).ravel())
                     
-                    new_DD = full_transform(W, fDD)
-                    new_DQ = full_transform(W, fDQ)
-                    
-                    #new_DD = np.tensordot(self.metric_tensor_inv_0, new_DD, (1,0))
-                    #new_DQ = np.tensordot(self.metric_tensor_inv_0, new_DQ, (1,0))
-                    
-                    equations.update((fDD - new_DD).ravel())
-                    equations.update((fDQ - new_DQ).ravel())
-            equations.remove(0)
+                    # U is 2 times contravariant so they transform the same
+                    # way as the basis
+                    # Therefore inverse 
+                    #print W.T, W.inv()
+                    #new_U =  full_transform(W.inv(), U)
+                    #Uequations.update(np.ravel(new_U - U))
+                    new_Beta = full_transform(W.inv(), Beta)
+                    Uequations.update(np.ravel(new_Beta - Beta))
+            equations.discard(0)
+            Uequations.discard(0)
             if self.DEBUG:
                 print label, equations
-            self.equations[label] = equations
-            symmetries = sp.solve(equations, dict=True, manual=True)
-            if not symmetries:
-                continue
-            assert len(symmetries)==1, "Unusual length of result of sp.solve (>1)"
-            self.symmetries[label] = symmetries = symmetries[0]
-            if self.DEBUG:
-                print symmetries
-            applymethod(self.AU_formfactorsDD[label], "subs", symmetries)
-            applymethod(self.AU_formfactorsDD[label], "simplify")
-            applymethod(self.AU_formfactorsDQ[label], "subs", symmetries)
-            applymethod(self.AU_formfactorsDQ[label], "simplify")
-            self.AU_formfactorsDDc[label]  = full_transform(self.M0inv, self.AU_formfactorsDD[label])
-            self.AU_formfactorsDQc[label]  = full_transform(self.M0inv, self.AU_formfactorsDQ[label])
-            applymethod(self.AU_formfactorsDDc[label], "simplify")
-            applymethod(self.AU_formfactorsDQc[label], "simplify")
+            self._equations[label] = equations
+            self._Uequations[label] = Uequations
+            
+            
+            if equations:
+                ffSym = set()
+                ffSym.update(np.ravel(self.AU_formfactorsDD.get(label, 0)))
+                ffSym.update(np.ravel(self.AU_formfactorsDQ.get(label, 0)))
+                ffSym.discard(0)
+                symmetries =  sp.solve( equations, ffSym, dict=True, manual=True)
+                self._symmetries[label] = symmetries = symmetries[0]
+                if self.DEBUG:
+                    print symmetries
+                applymethod(self.AU_formfactorsDD[label], "subs", symmetries)
+                applymethod(self.AU_formfactorsDD[label], "simplify")
+                applymethod(self.AU_formfactorsDQ[label], "subs", symmetries)
+                applymethod(self.AU_formfactorsDQ[label], "simplify")
+                self.AU_formfactorsDDc[label]  = full_transform(self.M0inv, self.AU_formfactorsDD[label])
+                self.AU_formfactorsDQc[label]  = full_transform(self.M0inv, self.AU_formfactorsDQ[label])
+                applymethod(self.AU_formfactorsDDc[label], "simplify")
+                applymethod(self.AU_formfactorsDQc[label], "simplify")
+            
+            Usymmetries = sp.solve(Uequations, sp.flatten(U), dict=True, manual=True)
+            if Usymmetries:
+                self._Usymmetries[label] = Usymmetries = Usymmetries[0]
+                self.U[label] = U.subs(Usymmetries)
+                self.U[label].simplify()
+            
             if self.DEBUG:
                 print self.AU_formfactorsDD[label], self.AU_formfactorsDQ[label]
     
@@ -698,20 +740,24 @@ class unit_cell(object):
         """
             Generates all Atoms of the Unit Cell.
         """
-        #if hasattr(self, "cell"): return
         self.multiplicity = collections.defaultdict(int)
         self.positions = collections.defaultdict(list)
         self.formfactors = collections.defaultdict(list)
         self.formfactorsDD = collections.defaultdict(list)
         self.formfactorsDQ = collections.defaultdict(list)
+        self.Beta = collections.defaultdict(list)
+        M_r = sp.Matrix([self.ar, self.br, self.cr])
+        M_r = M_r * M_r.T
         self._positions = []
         self._labels = []
-        for label in self.AU_positions.keys():
+        for label, position in self.AU_positions.iteritems():
+            U = self.U[label]
+            Beta = 2 * sp.pi**2 * U.multiply_elementwise(M_r)
             for generator in self.generators:
-                W = generator[:,:3]
+                W = sp.Matrix(generator[:,:3])
                 w = generator[:,3].ravel()
                 #print W, self.AU_positions[label], w
-                new_position = W.dot(self.AU_positions[label]) + w
+                new_position = W.dot(position) + w
                 new_position = np.array([stay_in_UC(i) for i in new_position])
                 if len(self.positions[label])>0: 
                     ind = ((new_position - np.array(self.positions[label]))**2).sum(1)
@@ -719,6 +765,7 @@ class unit_cell(object):
                     ind = np.array((1))
                 if not (ind < self.eps).any():
                     #if new_position not in self.positions[label]:
+                    self.Beta[label].append(sp.Matrix(full_transform(W.inv(), Beta)))
                     if label in self.AU_formfactors: 
                         self.formfactors[label].append(self.AU_formfactors[label])
                     if label in self.AU_formfactorsDD:
@@ -726,6 +773,8 @@ class unit_cell(object):
                     if label in self.AU_formfactorsDQ:
                         self.formfactorsDQ[label].append(full_transform(W, self.AU_formfactorsDQ[label]))
                     self.positions[label].append(new_position)
+                    #sp.pprint(self.Beta[label][-1])
+                    #sp.pprint(new_position)
                     self._positions.append(new_position)
                     self._labels.append(label)
                     self.multiplicity[label] += 1
@@ -789,7 +838,7 @@ class unit_cell(object):
     
     
     def calc_structure_factor(self, miller=None, DD=True, DQ=True, Temp=True, 
-                                    subs=False, evaluate=False):
+                                    subs=False, evaluate=False, Uaniso=True):
         """
             Takes the three Miller-indices of Type int and calculates the 
             Structure Factor in reciprocal basis.
@@ -797,6 +846,7 @@ class unit_cell(object):
         if miller==None:
             miller = self.miller
         self.subs.update(zip(self.miller, miller))
+        self.subs_U.clear()
         if not hasattr(self, "positions"):
             self.build_unit_cell()
         G = self.G.subs(self.subs)
@@ -809,26 +859,43 @@ class unit_cell(object):
         if DQ:
             self.F_DQin = np.zeros((3,3,3), object)
             self.F_DQsc = np.zeros((3,3,3), object)
-        for Atom in self.positions: # get position, formfactor and symmetry if DQ tensor
-            if Temp:
-                if isinstance(Temp, bool):
-                    Temp = int(Temp)
-                DW = sp.exp(-2*sp.pi**2 * Temp * Gc.dot(self.U[Atom].dot(Gc)))
+        if isinstance(Temp, bool):
+            Temp = int(Temp)
+        
+        for label in self.positions: # get position, formfactor and symmetry if DQ tensor
+            o = self.occupancy[label]
+            if label in self.Uaniso and Uaniso:
+                aniso = True
+                Uval = self.Uaniso[label]
             else:
-                DW = 1
-            o = self.occupancy[Atom]
-            if Atom in self.formfactors:
-                for i, f in enumerate(self.formfactors[Atom]):
-                    r = self.positions[Atom][i]
+                aniso = False
+                Uval = self.Uiso[label]
+            for i, r in enumerate(self.positions[label]):
+                if Temp:
+                    if aniso:
+                        # International Tables for Crystallography (2006).
+                        # Vol. D, Chapter 1.9, pp. 228.242.
+                        Beta = self.Beta[label][i].subs(self.subs)
+                        if subs:
+                            Beta = Beta.subs(zip(self.U[label], Uval))
+                        else:
+                            self.subs_U.update(zip(self.U[label], Uval))
+                        DW = sp.exp(-G.dot(Beta.dot(G))*Temp)
+                        
+                    else:
+                        DW = sp.exp(-2 * sp.pi**2 * self.q**2 * Uval * Temp)
+                else:
+                    DW = 1
+                
+                if label in self.formfactors:
+                    f = self.formfactors[label][i]
                     if self.DEBUG: print r, G.dot(r)
                     self.F_0 += o * f * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
-            if DD and Atom in self.formfactorsDD:
-                for i, f in enumerate(self.formfactorsDD[Atom]):
-                    r = self.positions[Atom][i]
+                if DD and label in self.formfactorsDD:
+                    f = self.formfactorsDD[label][i]
                     self.F_DD += o * f * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
-            if DQ and Atom in self.formfactorsDQ:
-                for i, f_in in enumerate(self.formfactorsDQ[Atom]):
-                    r = self.positions[Atom][i]
+                if DQ and label in self.formfactorsDQ:
+                    f_in = self.formfactorsDQ[label][i]
                     f_sc = - f_in.copy().transpose(0,2,1)
                     #applymethod(f_sc, "conjugate") # only real parameters as in FDMNES!!!!?
                     #self.F_DQ += o * (f_in - f_out) * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
@@ -838,14 +905,18 @@ class unit_cell(object):
         self.q = self.qfunc.dictcall(self.subs)
         self.d = 1/self.q
         self.theta = sp.asin(12398./(2*self.d*self.energy))
+
+        #if subs:
+        #    self.F_0 = self.F_0.subs(cs.subs)
         if evaluate:
             self.F_0 = self.F_0.n().expand()
-        if self.F_0.atoms(sp.Symbol):
+        
+        if self.F_0.has(sp.Symbol):
             self.F_0_func = makefunc(self.F_0)
         else:
             self.F_0_func = None
         # simplify:
-            
+        
         if DD:
             if subs:
                 applymethod(self.F_DD, "subs", self.subs)
@@ -861,6 +932,8 @@ class unit_cell(object):
                 applymethod(self.F_DQsc, "n")
             self.F_DQin = ArraySimp2(self.F_DQin)
             self.F_DQsc = ArraySimp2(self.F_DQsc)
+        
+        return self.F_0
         
     def hkl(self):
         return tuple(self.subs[ind] for ind in self.miller)
@@ -1315,7 +1388,7 @@ class unit_cell(object):
             f[self.S["psi"]] = psi
         else:
             if hasattr(self, "F_0") and \
-               (self.F_0.atoms(sp.Symbol).issuperset(self.miller) or miller==oldmiller) and not \
+               (self.F_0.has(*self.miller) or miller==oldmiller) and not \
                force_refresh:
                 if self.DEBUG:
                     print("Using cached SF")
@@ -1327,10 +1400,11 @@ class unit_cell(object):
         
         
         
-        q = self.qfunc.dictcall(self.subs) # 80us
+        q = self.qfunc.dictcall(self.subs).n()
         if self.f0.get("__q__") != q:
             self.f0.clear()
             self.f0["__q__"] = q
+        
         for label in self.AU_formfactors:
             ffsymbol = self.AU_formfactors[label]
             ion = self.get_ion(label)
@@ -1346,6 +1420,7 @@ class unit_cell(object):
         if self.F_0_func != None:
             F0_func = self.F_0_func
             f.update(self.subs)
+            f.update(self.subs_U)
         else:
             if simplify:
                 Feval = Feval.simplify()
@@ -1384,16 +1459,17 @@ class unit_cell(object):
         iter1 = itertools.product(hind, kind, lind)
         self._Rdone = set()
         kwargs = self.subs.copy()
-        def helper(v):
-            kwargs.update(zip(self.miller, v))
-            if v in self._Rdone:
+        kwargs.update(zip(self.miller, self.miller))
+        qfunc = makefunc(self.qfunc.dictcall(kwargs).n(), np.math)
+        def helper(R):
+            if qfunc(*R) > qmax:
                 return False
-            if self.qfunc.dictcall(kwargs) > qmax:
+            if R in self._Rdone:
                 return False
             if independent:
-                self._Rdone.update(self.get_equivalent_vectors(v))
+                self._Rdone.update(self.get_equivalent_vectors(R))
             return True
-        return itertools.ifilter(lambda v: helper(v), iter1)
+        return itertools.ifilter(helper, iter1)
         
     
     def set_msd_from_einstein(self, label, temperature, omegaE=None, mass=None):
@@ -1433,7 +1509,7 @@ class unit_cell(object):
         msd =  self.hbar/(2 * m * self.u * omegaE ) \
                / np.tanh(self.hbar * omegaE / (2*self.boltzmann*temperature)) \
                *1e10**2
-        self.U[label] = sp.eye(3) * msd
+        self.Uiso[label] = msd
         self.omegaE[label] = omegaE
         return msd
 
@@ -1476,7 +1552,7 @@ class unit_cell(object):
         else:
             energy = float(self.subs[self.energy])
         self.d = 1./self.qfunc.dictcall(self.subs)
-        q = self.qfunc.dictcall(self.subs) # 80us
+        q = self.qfunc.dictcall(self.subs).n()
         for label in self.AU_formfactors:
             ffsymbol = self.AU_formfactors[label]
             element = self.elements[label]
@@ -1518,7 +1594,7 @@ class unit_cell(object):
         self.transform_structure_factor(AAS=False)
         
         done = []
-        q = self.qfunc.dictcall(self.subs) # 80us
+        q = self.qfunc.dictcall(self.subs).n()
         for label in self.AU_formfactors:
             ffsymbol = self.AU_formfactors[label]
             element = self.elements[label]
