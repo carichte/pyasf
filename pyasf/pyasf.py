@@ -220,7 +220,7 @@ class unit_cell(object):
         self.S = dict([(s.name, s) for s in self.miller]) # dictionary of all symbols
         self.S["q"] = sp.Symbol("q", real=True)
         self.elements = {}
-        self.Uiso = collections.defaultdict(int)
+        self.Uiso = collections.defaultdict(float)
         self.Uaniso = {}
         self.U = dict() # dictionary of anisotropic mean square displacement
         self.dE = dict() # dictionary of edge shifts
@@ -819,8 +819,8 @@ class unit_cell(object):
             self.stoichiometry[self.elements[label]] += self.multiplicity[label] * self.occupancy[label]
         
         self.weights = dict([(atom, xi.get_element(atom)[1]) for atom in self.species])
-        div = gcd(*self.stoichiometry.values())
-        components = ["%s%i"%(item[0], item[1]/div) for item in self.stoichiometry.iteritems()]
+        div = min(self.stoichiometry.values())
+        components = ["%s%.2g"%(item[0], item[1]/div) for item in self.stoichiometry.iteritems()]
         components = map(lambda x: x[:-1] if (x[-1]=="1" and not x[-2].isdigit()) else x, components)
         self.SumFormula = "".join(components)
         
@@ -865,14 +865,12 @@ class unit_cell(object):
         for label in self.positions: # get position, formfactor and symmetry if DQ tensor
             o = self.occupancy[label]
             if label in self.Uaniso and Uaniso:
-                aniso = True
                 Uval = self.Uaniso[label]
             else:
-                aniso = False
                 Uval = self.Uiso[label]
             for i, r in enumerate(self.positions[label]):
                 if Temp:
-                    if aniso:
+                    if Uaniso:
                         # International Tables for Crystallography (2006).
                         # Vol. D, Chapter 1.9, pp. 228.242.
                         Beta = self.Beta[label][i].subs(self.subs)
@@ -883,7 +881,7 @@ class unit_cell(object):
                         DW = sp.exp(-G.dot(Beta.dot(G))*Temp)
                         
                     else:
-                        DW = sp.exp(-2 * sp.pi**2 * self.q**2 * Uval * Temp)
+                        DW = sp.exp(-2 * sp.pi**2 * self.q**2 * Uval * Temp).subs(self.subs)
                 else:
                     DW = 1
                 
