@@ -277,6 +277,7 @@ class unit_cell(object):
         self.metric_tensor_0 = self.metric_tensor.subs(dsub)#.subs(self.subs)
         self.metric_tensor_inv_0 = self.metric_tensor_inv.subs(dsub)#.subs(self.subs)
         self.G = sp.Matrix(self.miller)
+        # International Tables for Crystallography (2006). Vol. D, ch. 1.1, pp. 3-33
         # G is a vector in reciprocal space -> dual space, covariant
         # To transform it to cartesian space:
         # Gc = M * metric_tensor_inv * G
@@ -933,8 +934,18 @@ class unit_cell(object):
         
         return self.F_0
         
-    def hkl(self):
-        return tuple(self.subs[ind] for ind in self.miller)
+    def hkl(self, *miller, **kw):
+        
+        if miller:
+            self.subs.update(zip(self.miller, miller))
+        elif kw:
+            miller = map(lambda S: S.name, self.miller)
+            miller = dict(zip(miller, self.miller))
+            subs = [(miller[k], v) for k,v in kw.iteritems() if k in miller]
+            self.subs.update(subs)
+        else:
+            return tuple(self.subs[ind] for ind in self.miller)
+    
     
     def transform_structure_factor(self, AAS = True, simplify=True, subs=True):
         """
@@ -1469,6 +1480,7 @@ class unit_cell(object):
             return True
         return itertools.ifilter(helper, iter1)
         
+    
     
     def set_msd_from_einstein(self, label, temperature, omegaE=None, mass=None):
         """
