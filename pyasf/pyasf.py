@@ -93,6 +93,22 @@ class _named2darray(np.ndarray):
         return super(_named2darray, self).__setitem__(key, val)
 
 
+class SymbolDict(dict):
+    def __getitem__(self, sym):
+        #if not self.has_key(sym) and isinstance(sym, str):
+        if not sym in self and isinstance(sym, str):
+            syms = self.keys()
+            syms_str = [S.name for S in syms if isinstance(S, sp.Symbol)]
+            num = syms_str.count(sym)
+            if num==0:
+                raise KeyError("Symbol not found: `%s`"%sym)
+            elif num > 1:
+                raise KeyError("Multiple symbols found for name: `%s`"%sym)
+            else:
+                sym = syms[syms_str.index(sym)]
+        return super(SymbolDict, self).__getitem__(sym)
+
+
 def named2darray(array, fields):
     assert array.ndim == 2, "Number of dimensions should be 2"
     assert array.shape[1] == len(fields), \
@@ -115,18 +131,22 @@ def makefunc(expr, mathmodule = "numpy"):
     return func
 
 
-def mkfloat(string):
+def mkfloat(string, get_digits=False):
     assert isinstance(string, str), "Invalid input. Need str."
     string = string.strip()
     string = string.replace(",", ".")
     i = string.find("(")
     if i>=0:
         string = string[:i]
+    digits = len(string.split(".")[1]) if "." in string else 0
     try:
         res = float(string)
     except:
         res = 0
-    return res
+    if get_digits:
+        return res, digits
+    else:
+        return res
 
 def applymethod(Arr, Method, *args):
     for ele in np.nditer(Arr, flags=["refs_ok"], op_flags=['readwrite']):
@@ -144,6 +164,10 @@ ArraySimp1 = np.vectorize(
 ArraySimp2 = np.vectorize(
     lambda ele:ele.rewrite(sp.exp, sp.sin).expand() if hasattr(ele, "rewrite") else ele,
     doc="Vectorized function to simplify symbolic array elements using rewrite")
+
+
+
+
 
 
 
@@ -213,8 +237,8 @@ class unit_cell(object):
         self.AU_formfactorsDDc = {} # only asymmetric unit, pure dipolar, cartesian
         self.AU_formfactorsDQc = {} # only asymmetric unit, dipolar-quadrupolar interference, cartesian
         self.miller = sp.symbols("h k l", integer=True)
-        self.subs = {}
-        self.subs_U = {}
+        self.subs = SymbolDict()
+        self.subs_U = SymbolDict()
         self.energy = sp.Symbol("epsilon", real=True)
         self.subs.update(dict(zip(self.miller, self.miller)))
         self.S = dict([(s.name, s) for s in self.miller]) # dictionary of all symbols
@@ -231,7 +255,7 @@ class unit_cell(object):
         self.occupancy = dict()
         self.charges = collections.defaultdict(int)
         self.masses = dict()
-        self.omegaE = dict()
+        self.einstein_frequency = dict()
         
         if str(structure).isdigit():
             structure = int(structure)
@@ -418,7 +442,7 @@ class unit_cell(object):
             pass
         return ion
     
-    def load_cif(self, fname, resonant="", max_denominator=10000):
+    def load_cif(self, fname, resonant="", max_denominator=100):
         """
             Loads a structure from a .cif file.
             See:
@@ -472,20 +496,25 @@ class unit_cell(object):
             
         
         def getcoord(cifline):
-            coord = mkfloat(cifline)
+            coord, digits = mkfloat(cifline, get_digits=True)
             if max_denominator==None:
                 return coord
-            coord = Fraction(coord)
-            coord = coord.limit_denominator(max_denominator)
+            coordrat = Fraction(coord)
+            coordrat = coordrat.limit_denominator(max_denominator)
+            if abs(coord-float(coordrat)) < (1*10**-digits):
+                coord = coordrat
             return coord
         
         def getangle(cifline):
-            ang = mkfloat(cif[cifline])/180
+            ang, digits = mkfloat(cif[cifline], get_digits=True)
+            ang = ang/180
             if max_denominator==None:
                 return coord
-            ang = Fraction("%.15f"%ang)
-            ang = sp.S(ang.limit_denominator(max_denominator)) * sp.pi
-            return ang
+            angrat = Fraction("%.15f"%ang)
+            angrat = angrat.limit_denominator(max_denominator)
+            if abs(ang-float(angrat)) < (1*10**-digits/180.):
+                ang = angrat
+            return sp.S(ang) * sp.pi
         
         self._init_lattice(sg_num)
         
@@ -846,7 +875,7 @@ class unit_cell(object):
         """
         if miller==None:
             miller = self.miller
-        self.subs.update(zip(self.miller, miller))
+        self.hkl(*miller)
         self.subs_U.clear()
         if not hasattr(self, "positions"):
             self.build_unit_cell()
@@ -868,6 +897,7 @@ class unit_cell(object):
             if label in self.Uaniso and Uaniso:
                 Uval = self.Uaniso[label]
             else:
+                Uaniso = False
                 Uval = self.Uiso[label]
             for i, r in enumerate(self.positions[label]):
                 if Temp:
@@ -935,7 +965,6 @@ class unit_cell(object):
         return self.F_0
         
     def hkl(self, *miller, **kw):
-        
         if miller:
             self.subs.update(zip(self.miller, miller))
         elif kw:
@@ -1327,7 +1356,7 @@ class unit_cell(object):
     
     def DAFS(self, energy, miller, DD=False, DQ=False, Temp=True, psi=0,
              func_output=False, fwhm_ev=0.25, table="Sasaki", channel="ss",
-             simplify=True, subs=True, force_refresh=True):
+             simplify=True, subs=True, force_refresh=True, Uaniso=True):
         """
             Calculates a Diffraction Anomalous Fine Structure (DAFS) curve for
             a given array of energies and a certain Bragg reflection hkl
@@ -1349,14 +1378,14 @@ class unit_cell(object):
         """
         if not hasattr(self, "F_0"):
             self.calc_structure_factor(miller, DD=DD, DQ=DQ, Temp=Temp,
-                                               subs=subs, evaluate=subs)
+                                       subs=subs, evaluate=subs, Uaniso=Uaniso)
         
         miller = tuple(map(int, miller))
         assert len(miller)==3, "Input for `miller` index must be 3-tuple of int"
         
         oldmiller = self.hkl()
         
-        self.subs.update(zip(self.miller, miller))
+        self.hkl(*miller)
         
         self.f.clear()
         f = self.f
@@ -1375,9 +1404,9 @@ class unit_cell(object):
                 pass
             else:
                 self.calc_structure_factor(miller, DD=DD, DQ=DQ, Temp=Temp,
-                                           subs=subs, evaluate=subs)
+                                       subs=subs, evaluate=subs, Uaniso=Uaniso)
                 self.calc_scattered_amplitude(simplify=simplify, DD=DD, DQ=DQ,
-                                              subs=subs)
+                                              subs=subs, Uaniso=Uaniso)
             Feval = self.E[channel]
             f_aniso = dict()
             for sym in set.intersection(Feval.atoms(), self.S.values()):
@@ -1403,7 +1432,7 @@ class unit_cell(object):
                     print("Using cached SF")
             else:
                 self.calc_structure_factor(miller, DD=DD, DQ=DQ, Temp=Temp,
-                                           subs=subs, evaluate=subs)
+                                   subs=subs, evaluate=subs, Uaniso=Uaniso)
                 #subit = self.subs.iteritems()
                 Feval = self.F_0.subs(self.subs.iteritems()).n().expand() # self.F_0.subs(self.subs).n().expand()
         
@@ -1482,7 +1511,7 @@ class unit_cell(object):
         
     
     
-    def set_msd_from_einstein(self, label, temperature, omegaE=None, mass=None):
+    def set_msd_from_einstein(self, label, temperature, einstein_frequency=None, mass=None):
         """
             Sets the isotropic mean square displacement (unit_cell.U) of an 
             atom according to the Einstein model and a given temperature.
@@ -1493,11 +1522,14 @@ class unit_cell(object):
                     the label of the atom
                 temperature : float
                     the temperature in kelvin
-                omegaE : float
+                einstein_frequency : float
                     the characteristic frequency in terms of the Einstein 
                     model
                 mass : float (optional)
                     the mass of the atom in atomic mass units
+                component : 2-tuple
+                    the index of the tensor component described.
+                    If `None` the isotropic displacement is used
             
             Returns:
                 The isotropic mean square displacement in Angstrom^2
@@ -1506,21 +1538,32 @@ class unit_cell(object):
             raise ValueError("Atom labelled `%s` not found in unit_cell"%label)
         # http://dx.doi.org/10.1107/S0108767308031437
         element = self.elements[label]
+        
         if mass != None:
             self.masses[element] = mass
         elif not element in self.masses:
             import rexs.xray.interactions as xi
             self.masses[element] = xi.get_element(element)[1]
         
-        if omegaE==None:
-            omegaE = self.omegaE[label]
-        
         m = self.masses[element]
-        msd =  self.hbar/(2 * m * self.u * omegaE ) \
-               / np.tanh(self.hbar * omegaE / (2*self.boltzmann*temperature)) \
-               *1e10**2
-        self.Uiso[label] = msd
-        self.omegaE[label] = omegaE
+        
+        omega = einstein_frequency
+        if omega==None:
+            omega = self.einstein_frequency[label]
+        else:
+            self.einstein_frequency[label] = omega
+        
+        if hasattr(omega, "shape") and omega.shape==(3,3):
+            omega = np.array(omega).astype(float)
+            msd =  self.hbar/(2 * m * self.u * omega ) \
+                   / np.tanh(self.hbar * omega / (2*self.boltzmann*temperature)) \
+                   *1e10**2
+            self.Uaniso[label] = sp.Matrix(msd)
+        else:
+            msd =  self.hbar/(2 * m * self.u * omega ) \
+                   / np.tanh(self.hbar * omega / (2*self.boltzmann*temperature)) \
+                   *1e10**2
+            self.Uiso[label] = msd
         return msd
 
     def set_temperature(self, temperature):
@@ -1536,8 +1579,8 @@ class unit_cell(object):
                 temperature : float
                     the temperature in kelvin
         """
-        omegaE = [(label,self.omegaE[label]) for label in self.elements]
-        for label, omega in omegaE:
+        omegas = [(label,self.einstein_frequency[label]) for label in self.elements]
+        for label, omega in omegas:
             self.set_msd_from_einstein(label, temperature, omega)
     
     
