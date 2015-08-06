@@ -255,7 +255,8 @@ class unit_cell(object):
         self.occupancy = dict()
         self.charges = collections.defaultdict(int)
         self.masses = dict()
-        self.einstein_frequency = dict()
+        self.debye_temperature = dict()
+        self.einstein_temperature = dict()
         
         if str(structure).isdigit():
             structure = int(structure)
@@ -1511,7 +1512,7 @@ class unit_cell(object):
         
     
     
-    def set_msd_from_einstein(self, label, temperature, einstein_frequency=None, mass=None):
+    def calc_ADP_from_temperature(self, label, temperature, debye_temperature=None, einstein_temperature=None, mass=None):
         """
             Sets the isotropic mean square displacement (unit_cell.U) of an 
             atom according to the Einstein model and a given temperature.
@@ -1522,7 +1523,7 @@ class unit_cell(object):
                     the label of the atom
                 temperature : float
                     the temperature in kelvin
-                einstein_frequency : float
+                einstein_temperature : float
                     the characteristic frequency in terms of the Einstein 
                     model
                 mass : float (optional)
@@ -1547,22 +1548,39 @@ class unit_cell(object):
         
         m = self.masses[element]
         
-        omega = einstein_frequency
-        if omega==None:
-            omega = self.einstein_frequency[label]
+        if debye_temperature != None:
+            model = "debye"
+            self.debye_temperature[label] = debye_temperature
+        elif einstein_temperature != None:
+            model = "einstein"
+            self.einstein_temperature[label] = einstein_temperature
+        elif label in self.debye_temperature:
+            model = "debye"
+        elif label in self.einstein_temperature:
+            model = "einstein"
         else:
-            self.einstein_frequency[label] = omega
+            raise ValueError("No characteristic temperature given. "
+              "Please specify `debye_temperature` or `einstein_temperature`")
+        if self.DEBUG:
+            print("Using %s model for ADP calculation of %s"%(model, label))
         
-        if hasattr(omega, "shape") and omega.shape==(3,3):
-            omega = np.array(omega).astype(float)
-            msd =  self.hbar/(2 * m * self.u * omega ) \
-                   / np.tanh(self.hbar * omega / (2*self.boltzmann*temperature)) \
-                   *1e10**2
+        Tc = getattr(self, "%s_temperature"%model)[label]
+        
+        if hasattr(Tc, "shape") and Tc.shape==(3,3):
+            Tc = np.array(Tc).astype(float)
+        
+        if model == "einstein":
+            #omega = Tc * self.boltzmann / self.hbar
+            msd =  self.hbar**2/(2. * m * self.u * Tc * self.boltzmann ) \
+                   / np.tanh( Tc / (2*temperature)) *1e10**2
+        elif model == "debye":
+            # B = 8 * pi**2 * U
+            msd = 1e10**2 * 3 * self.hbar**2 / (m * self.u * Tc * self.boltzmann) * \
+                  ( debye_phi(Tc/temperature) / (Tc/temperature) + 0.25)
+        
+        if hasattr(msd, "shape") and msd.shape==(3,3):
             self.Uaniso[label] = sp.Matrix(msd)
         else:
-            msd =  self.hbar/(2 * m * self.u * omega ) \
-                   / np.tanh(self.hbar * omega / (2*self.boltzmann*temperature)) \
-                   *1e10**2
             self.Uiso[label] = msd
         return msd
 
@@ -1579,9 +1597,8 @@ class unit_cell(object):
                 temperature : float
                     the temperature in kelvin
         """
-        omegas = [(label,self.einstein_frequency[label]) for label in self.elements]
-        for label, omega in omegas:
-            self.set_msd_from_einstein(label, temperature, omega)
+        for label in self.elements:
+            self.calc_ADP_from_temperature(label, temperature)
     
     
     

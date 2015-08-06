@@ -355,6 +355,19 @@ def get_rec_cell_parameters(a, b, c, alpha, beta, gamma):
     
     return (ar, br, cr, alphar, betar, gammar, M, Mi, G, G_r)
 
+@np.vectorize
+def debye_phi(v):
+    if v==0:
+        return 1.
+    elif v < 1e-3:
+        phi = v
+    elif v > 1e2:
+        phi = np.pi**2/6
+    else:
+        v = complex(v)
+        phi = (sp.mpmath.fp.polylog(2, np.exp(v.real)) - v**2/2. + v*np.log(1-np.exp(v)) -  np.pi**2/6.)
+    return (phi/v).real
+#debye_phi_v = np.vectorize(debye_phi)
 
 def calc_f0(ion, q): # q is 2 sin(theta)/lambda
     """
