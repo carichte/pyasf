@@ -33,7 +33,7 @@ import StringIO
         add symmetry to DQ tensors
         DQ part imaginary?
 """
-dictcall = lambda self, d: self.__call__(*[d[k] for k in self.kw])
+dictcall = lambda self, d: self.__call__(*[d.get(k, d.get(k.name, k)) for k in self.kw])
 
 
 #class Interp1dDict(interp1d):
@@ -125,6 +125,7 @@ def makefunc(expr, mathmodule = "numpy"):
     symbols.sort(key=str)
     func = lambdify(symbols, expr, mathmodule, dummify=False)
     func.kw = symbols
+    func.expr = expr
     func.kwstr = map(lambda x: x.name, symbols)
     func.dictcall = types.MethodType(dictcall, func)
     func.__doc__ = str(expr)
@@ -834,7 +835,7 @@ class unit_cell(object):
         self._dist = dist = np.linalg.norm(diff, axis=1)
         ind = dist.argsort()
         indlbl = ind%len(self._labels)
-        return self._labels[indlbl[1:num+1]], dist[ind[1:num+1]]
+        return self._labels[indlbl[1:num+1]], dist[ind[1:num+1]], diff[ind[1:num+1]]
     
     
     def get_density(self):
@@ -895,10 +896,12 @@ class unit_cell(object):
         
         for label in self.positions: # get position, formfactor and symmetry if DQ tensor
             o = self.occupancy[label]
-            if label in self.Uaniso and Uaniso:
-                Uval = self.Uaniso[label]
+            if Uaniso:
+                if label in self.Uaniso:
+                    Uval = self.Uaniso[label]
+                else:
+                    Uval = sp.eye(3) * self.Uiso[label]
             else:
-                Uaniso = False
                 Uval = self.Uiso[label]
             for i, r in enumerate(self.positions[label]):
                 if Temp:
@@ -977,13 +980,17 @@ class unit_cell(object):
             return tuple(self.subs[ind] for ind in self.miller)
     
     
-    def transform_structure_factor(self, AAS = True, simplify=True, subs=True):
+    def transform_structure_factor(self, AAS = True, simplify=True, 
+                                                         subs=True):
         """
-            First transforms F to a real space, cartesian, crystal-fixed system ->Fc.
-            Then transforms Fc to the diffractometer system, which is G along xd and sigma along zd ->Fd.
+        
+            First transforms F to a real space, cartesian, crystal-fixed
+            system ->Fc. Then transforms Fc to the diffractometer system,
+            which is G along xd and sigma along zd ->Fd.
             
             This happens according to the work reported in:
-            Acta Cryst. (1991). A47, 180-195 [doi:10.1107/S010876739001159X]
+            Acta Cryst. (1991). A47, 180-195 
+            [doi:10.1107/S010876739001159X]
         """
         if not hasattr(self, "F_0") or \
            (AAS and (not hasattr(self, "F_DD") or not hasattr(self, "F_DQin"))):
@@ -1058,7 +1065,7 @@ class unit_cell(object):
         miller = sp.Matrix(miller)
         if not hasattr(self, "Q"):
             self.transform_structure_factor()
-        UB = self.Q * self.M * self.metric_tensor
+        UB = self.Q * self.M #* self.metric_tensor
         if psi!=0:
             Psi = np.array([[1, 0, 0], 
                            [0,sp.cos(psi),sp.sin(psi)], 
@@ -1512,7 +1519,9 @@ class unit_cell(object):
         
     
     
-    def calc_ADP_from_temperature(self, label, temperature, debye_temperature=None, einstein_temperature=None, mass=None):
+    def calc_ADP_from_temperature(self, label, temperature, 
+                    debye_temperature=None, einstein_temperature=None, 
+                    mass=None, return_value="U"):
         """
             Sets the isotropic mean square displacement (unit_cell.U) of an 
             atom according to the Einstein model and a given temperature.
@@ -1523,6 +1532,9 @@ class unit_cell(object):
                     the label of the atom
                 temperature : float
                     the temperature in kelvin
+                debye_temperature : float
+                    the characteristic frequency in terms of the Debye
+                    model
                 einstein_temperature : float
                     the characteristic frequency in terms of the Einstein 
                     model
@@ -1531,7 +1543,13 @@ class unit_cell(object):
                 component : 2-tuple
                     the index of the tensor component described.
                     If `None` the isotropic displacement is used
-            
+                return_value : str
+                    Defines which value to return. Can be one of:
+                        `U`     - The U parameter as used in .cif files
+                        `B`     - The B parameter as used in .cif files
+                        `msd`   - The isotropic mean square displacement
+                    B = 8 * pi**2 * U
+                    msd = U_isotropic * 3
             Returns:
                 The isotropic mean square displacement in Angstrom^2
         """
@@ -1568,21 +1586,28 @@ class unit_cell(object):
         
         if hasattr(Tc, "shape") and Tc.shape==(3,3):
             Tc = np.array(Tc).astype(float)
+        else:
+            Tc = float(Tc)
         
         if model == "einstein":
-            #omega = Tc * self.boltzmann / self.hbar
-            msd =  self.hbar**2/(2. * m * self.u * Tc * self.boltzmann ) \
-                   / np.tanh( Tc / (2*temperature)) *1e10**2
+            omega = Tc * self.boltzmann / self.hbar
+            U =   self.hbar/(2. * m * self.u * omega ) \
+                   / np.tanh( self.hbar*omega / (2*self.boltzmann*temperature)) *1e10**2
         elif model == "debye":
             # B = 8 * pi**2 * U
-            msd = 1e10**2 * 3 * self.hbar**2 / (m * self.u * Tc * self.boltzmann) * \
+            U =  1e10**2 * 3 * self.hbar**2 / (m * self.u * Tc * self.boltzmann) * \
                   ( debye_phi(Tc/temperature) / (Tc/temperature) + 0.25)
         
-        if hasattr(msd, "shape") and msd.shape==(3,3):
-            self.Uaniso[label] = sp.Matrix(msd)
+        if hasattr(U, "shape") and U.shape==(3,3):
+            self.Uaniso[label] = sp.Matrix(U)
         else:
-            self.Uiso[label] = msd
-        return msd
+            self.Uiso[label] = U
+        if return_value=="msd":
+            return U * 3
+        elif return_value=="B":
+            return U * 8 * np.pi**2
+        else:
+            return U
 
     def set_temperature(self, temperature):
         """
@@ -1590,7 +1615,7 @@ class unit_cell(object):
             atom according to the Einstein model and a given temperature.
             
             Before using it, the characteristic frequency in the einstein 
-            model needs to be given via the unit_cell.set_msd_from_einstein
+            model needs to be given via the unit_cell.calc_ADP_from_temperature
             method.
             
             Inputs:
