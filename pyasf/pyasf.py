@@ -239,7 +239,6 @@ class unit_cell(object):
         self.AU_formfactorsDQc = {} # only asymmetric unit, dipolar-quadrupolar interference, cartesian
         self.miller = sp.symbols("h k l", integer=True)
         self.subs = SymbolDict()
-        self.subs_U = SymbolDict()
         self.energy = sp.Symbol("epsilon", real=True)
         self.subs.update(dict(zip(self.miller, self.miller)))
         self.S = dict([(s.name, s) for s in self.miller]) # dictionary of all symbols
@@ -551,7 +550,7 @@ class unit_cell(object):
             py = sp.S(getcoord(line._atom_site_fract_y))
             pz = sp.S(getcoord(line._atom_site_fract_z))
             occ = mkfloat(line._atom_site_occupancy) if loop.has_key("_atom_site_occupancy") else 1
-            position = (px, py, pz)
+            position = map(stay_in_UC, (px, py, pz))
             isotropic = (symbol not in resonant)
             if loop.has_key("_atom_site_u_iso_or_equiv"):
                 iso = mkfloat(line._atom_site_u_iso_or_equiv)
@@ -565,6 +564,8 @@ class unit_cell(object):
             self.add_atom(label, position, isotropic, assume_complex=True, 
                           occupancy=occ, charge=charge)
         
+        
+        vr = self.ar, self.br, self.cr
         if cif.has_key("_atom_site_aniso_label"):
             loop = cif.GetLoop("_atom_site_aniso_label")
             for key in loop.keys():
@@ -583,9 +584,7 @@ class unit_cell(object):
                         value /= 8. * np.pi**2
                     elif loop.has_key(kw_beta):
                         value = mkfloat(loop[kw_beta][num])
-                        value /= self.metric_tensor_inv[i-1,j-1] / 4.
-                        value = value.subs(self.subs)
-                        value /= 8. * np.pi**2
+                        value /= 2*np.pi**2 * vr[i-1] * vr[j-1] # http://dx.doi.org/10.1107/S0108767396005697
                     Uaniso[i-1,j-1] = Uaniso[j-1,i-1] = value
     
     
@@ -644,18 +643,22 @@ class unit_cell(object):
         M_r = sp.Matrix([self.ar, self.br, self.cr])
         M_r = M_r * M_r.T
         for label in labels:
+            if self.DEBUG:
+                print label
             equations = set()
             Uequations = set()
             U = self.U[label]
             Beta = U.multiply_elementwise(M_r)
+            #Beta = full_transform(self.metric_tensor, Beta) # transform to direct lattice
             position = self.AU_positions[label]
             for generator in self.generators:
                 W = sp.Matrix(generator[:,:3])
                 w = generator[:,3].ravel()
-                if self.DEBUG: print w, W
+                #if self.DEBUG: print w, W
                 new_position = W.dot(position) + w
                 new_position = np.array([stay_in_UC(i) for i in new_position])
-                if self.DEBUG: print new_position
+                if self.DEBUG: 
+                    print ((new_position - position)**2).sum(), new_position - position
                 #if (new_position == self.AU_positions[label]).all(): #1.8.13
                 dist = ((new_position - position)**2).sum()
                 if dist < self.eps:
@@ -685,12 +688,12 @@ class unit_cell(object):
                     #print W.T, W.inv()
                     #new_U =  full_transform(W.inv(), U)
                     #Uequations.update(np.ravel(new_U - U))
-                    new_Beta = full_transform(W.inv(), Beta)
+                    if self.DEBUG:
+                        print generator
+                    new_Beta = full_transform(W.inv().T, Beta)
                     Uequations.update(np.ravel(new_Beta - Beta))
             equations.discard(0)
             Uequations.discard(0)
-            if self.DEBUG:
-                print label, equations
             self._equations[label] = equations
             self._Uequations[label] = Uequations
             
@@ -720,53 +723,10 @@ class unit_cell(object):
                 self.U[label].simplify()
             
             if self.DEBUG:
-                print self.AU_formfactorsDD[label], self.AU_formfactorsDQ[label]
-    
-    
-    def _transform(self, generator, AU=False):
-        """
-            transform structure unit with a given generator.
-        """
-        generator = np.array(generator)
-        if AU:
-            positions = self.AU_positions
-            formfactorsDD = self.AU_formfactorsDD
-            formfactorsDQ = self.AU_formfactorsDQ
-        else:
-            positions = self.positions
-            formfactorsDD = self.formfactorsDD
-            formfactorsDQ = self.formfactorsDQ
-        if generator.shape == (4, 3):
-            generator = generator.T
-        if generator.shape == (3, 4):
-            W = generator[:,:3]
-            w = generator[:,3].ravel()
-        elif generator.shape == (3, 3):
-            W = generator
-            w = np.zeros(3)
-        elif len(generator.ravel())==3:
-            W = np.diag((1,1,1))
-            w = generator.ravel()
-        else:
-            return
-        for name in positions.keys():
-            if AU:
-                new_position = W.dot(positions[name]) + w
-                new_position = new_position%1
-                positions[name] = new_position
-                if name in formfactorsDD:
-                    formfactorsDD[name] = full_transform(W, formfactorsDD[name])
-                if name in formfactorsDQ:
-                    formfactorsDQ[name] = full_transform(W, formfactorsDQ[name])
-            else:
-                for i in range(len(positions[name])):
-                    new_position = W.cot(positions[name][i]) + w
-                    new_position = new_position%1
-                    positions[name][i] = new_position
-                    if name in formfactorsDD:
-                        formfactorsDD[name][i] = full_transform(W, formfactorsDD[name][i])
-                    if name in formfactorsDQ:
-                        formfactorsDQ[name][i] = full_transform(W, formfactorsDQ[name][i])
+                if label in self.AU_formfactorsDD:
+                    print self.AU_formfactorsDD[label]
+                if label in self.AU_formfactorsDQ:
+                    self.AU_formfactorsDQ[label]
     
     def build_unit_cell(self):
         """
@@ -797,7 +757,7 @@ class unit_cell(object):
                     ind = np.array((1))
                 if not (ind < self.eps).any():
                     #if new_position not in self.positions[label]:
-                    self.Beta[label].append(sp.Matrix(full_transform(W.inv(), Beta)))
+                    self.Beta[label].append(sp.Matrix(full_transform(W.inv().T, Beta)))
                     if label in self.AU_formfactors: 
                         self.formfactors[label].append(self.AU_formfactors[label])
                     if label in self.AU_formfactorsDD:
@@ -878,7 +838,6 @@ class unit_cell(object):
         if miller==None:
             miller = self.miller
         self.hkl(*miller)
-        self.subs_U.clear()
         if not hasattr(self, "positions"):
             self.build_unit_cell()
         G = self.G.subs(self.subs)
@@ -897,10 +856,7 @@ class unit_cell(object):
         for label in self.positions: # get position, formfactor and symmetry if DQ tensor
             o = self.occupancy[label]
             if Uaniso:
-                if label in self.Uaniso:
-                    Uval = self.Uaniso[label]
-                else:
-                    Uval = sp.eye(3) * self.Uiso[label]
+                pass
             else:
                 Uval = self.Uiso[label]
             for i, r in enumerate(self.positions[label]):
@@ -908,11 +864,9 @@ class unit_cell(object):
                     if Uaniso:
                         # International Tables for Crystallography (2006).
                         # Vol. D, Chapter 1.9, pp. 228.242.
-                        Beta = self.Beta[label][i].subs(self.subs)
+                        Beta = self.Beta[label][i]
                         if subs:
-                            Beta = Beta.subs(zip(self.U[label], Uval))
-                        else:
-                            self.subs_U.update(zip(self.U[label], Uval))
+                            Beta = Beta.subs(self.subs)
                         DW = sp.exp(-G.dot(Beta.dot(G))*Temp)
                         
                     else:
@@ -1461,12 +1415,17 @@ class unit_cell(object):
             
             f[ffsymbol] = f1f2[label] + self.f0[ion]
         
+        for label in self.U:
+            if label in self.Uaniso:
+                Uval = self.Uaniso[label]
+            else:
+                Uval = sp.eye(3) * self.Uiso[label]
+            self.subs.update(zip(sp.flatten(self.U[label]), map(float, sp.flatten(Uval))))
         
         
         if self.F_0_func != None:
             F0_func = self.F_0_func
             f.update(self.subs)
-            f.update(self.subs_U)
         else:
             if simplify:
                 Feval = Feval.simplify()
