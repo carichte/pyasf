@@ -728,6 +728,23 @@ class unit_cell(object):
                 if label in self.AU_formfactorsDQ:
                     self.AU_formfactorsDQ[label]
     
+    def U_cartesian(self, label, symbolic=True):
+        """
+            Calculate atomic displacement parameter U in cartesian coordinates
+            according to http://dx.doi.org/10.1107/S0108767396005697
+        """
+        if symbolic:
+            U = self.U[label]
+        else:
+            U = self.Uaniso[label]
+        Dij = self.M * sp.diag(self.ar, self.br, self.cr)
+        Uc = sp.Matrix(full_transform(Dij, U))
+        
+        if not symbolic:
+            Uc = Uc.subs(self.subs)
+        return Uc
+        
+    
     def build_unit_cell(self):
         """
             Generates all Atoms of the Unit Cell.
@@ -827,7 +844,6 @@ class unit_cell(object):
         """
         self.get_density()
         return self.SumFormula
-    
     
     def calc_structure_factor(self, miller=None, DD=True, DQ=True, Temp=True, 
                                     subs=False, evaluate=False, Uaniso=True):
