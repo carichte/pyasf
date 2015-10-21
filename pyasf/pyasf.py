@@ -675,7 +675,7 @@ class unit_cell(object):
                     #Uequations.update(np.ravel(new_U - U))
                     if self.DEBUG:
                         print generator
-                    new_Beta = full_transform(W.inv().T, Beta)
+                    new_Beta = full_transform(W.T, Beta)
                     Uequations.update(np.ravel(new_Beta - Beta))
             equations.discard(0)
             Uequations.discard(0)
@@ -779,7 +779,7 @@ class unit_cell(object):
                     ind = np.array((1))
                 if not (ind < self.eps).any():
                     #if new_position not in self.positions[label]:
-                    self.Beta[label].append(sp.Matrix(full_transform(W.inv().T, Beta)))
+                    self.Beta[label].append(sp.Matrix(full_transform(W.T, Beta)))
                     if label in self.AU_formfactors: 
                         self.formfactors[label].append(self.AU_formfactors[label])
                     if label in self.AU_formfactorsDD:
