@@ -7,7 +7,6 @@
     http://www.desy.de/~crichter
 """
 
-import types
 import itertools
 import copy
 import sympy as sp
@@ -17,23 +16,24 @@ import collections
 import urllib2
 import CifFile
 from time import time
-from functions import *
 from fractions import Fraction
 from scipy.interpolate import interp1d
 from scipy import ndimage
 from sympy.utilities import lambdify
 import elements
 import StringIO
+
+from functions import *
+import FormFactors
 #mydict = dict({"Abs":abs})
 #epsilon=1.e-10
 
 """
     TODO:
-        consider different space group settings
-        add symmetry to DQ tensors
+        consider different space group settings - check
+        add symmetry to DQ tensors - check
         DQ part imaginary?
 """
-dictcall = lambda self, d: self.__call__(*[d.get(k, d.get(k.name, k)) for k in self.kw])
 
 
 #class Interp1dDict(interp1d):
@@ -119,17 +119,6 @@ def named2darray(array, fields):
     array.set_fields(fields)
     return array
 
-
-def makefunc(expr, mathmodule = "numpy"):
-    symbols = list(expr.atoms(sp.Symbol))
-    symbols.sort(key=str)
-    func = lambdify(symbols, expr, mathmodule, dummify=False)
-    func.kw = symbols
-    func.expr = expr
-    func.kwstr = map(lambda x: x.name, symbols)
-    func.dictcall = types.MethodType(dictcall, func)
-    func.__doc__ = str(expr)
-    return func
 
 
 def mkfloat(string, get_digits=False):
@@ -248,7 +237,7 @@ class unit_cell(object):
         self.Uaniso = {}
         self.U = dict() # dictionary of anisotropic mean square displacement
         self.dE = dict() # dictionary of edge shifts
-        self.f0func = dict()
+        self.f0func = FormFactors.FormFactors(kwargs.pop("f0table", "ITC"))
         self.feff_func = dict()
         self.f = dict()
         self.f0 = dict()
@@ -361,10 +350,6 @@ class unit_cell(object):
         if charge!=None:
             self.charges[label] = int(charge)
         
-        ion = self.get_ion(label)
-        if not ion in self.f0func:
-            # better agains sympy here? does it really make sense to have different q values for one reflection?
-            self.f0func[ion] = makefunc(calc_f0(ion, self.S["q"]), "math")
         self.occupancy[label] = occupancy
         
         ind = xrange(3)
@@ -743,7 +728,27 @@ class unit_cell(object):
         if not symbolic:
             Uc = Uc.subs(self.subs)
         return Uc
+    
+    def get_thermal_ellipsoids(self, label):
+        """
+            Returns eigenvalues and eigenvectors for the atomic displacement 
+            parameter in cartesian coordinates U_ij^c according to 
+            http://dx.doi.org/10.1107/S0108767396005697
+        """
         
+        Uc = self.U_cartesian(label, False)
+        Uc = np.array(Uc).astype(float)
+        Ueq = Uc.trace()/3.
+        
+        eigval, eigvec = np.linalg.eigh(Uc)
+        #iso = eigval.mean()
+        #aniso = eigval.max() / eigval.min()
+        
+        #direction_c = eigvec[:,eigval.argmax()]
+        #direction = self.Minv.dot(direction_c)
+        #direction = direction.subs(self.subs).n()
+        
+        return eigval, eigvec
     
     def build_unit_cell(self):
         """
@@ -1416,7 +1421,7 @@ class unit_cell(object):
         
         
         
-        q = self.qfunc.dictcall(self.subs).n()
+        q = float(self.qfunc.dictcall(self.subs).n())
         if self.f0.get("__q__") != q:
             self.f0.clear()
             self.f0["__q__"] = q
@@ -1427,7 +1432,7 @@ class unit_cell(object):
             if not ion in self.f0:
                 if self.DEBUG:
                     print("Calculating nonresonant scattering amplitude for %s"%ion)
-                self.f0[ion] = self.f0func[ion](q)
+                self.f0[ion] = self.f0func(ion, q)
             
             f[ffsymbol] = f1f2[label] + self.f0[ion]
         
@@ -1628,7 +1633,7 @@ class unit_cell(object):
             element = self.elements[label]
             ion = self.get_ion(label)
             Z = elements.Z[element]
-            f0 = self.f0func[ion](q)
+            f0 = self.f0func(ion, q)
             if ffsymbol.name.endswith("_0"):
                 self.subs[ffsymbol] = f0
             else:
@@ -1681,7 +1686,7 @@ class unit_cell(object):
                 print("Calculating nonresonant f_0 for %s..." %ffsymbol.name)
             Z = elements.Z[element]
             ion = self.get_ion(label)
-            f0 = self.f0func[ion](q)
+            f0 = float(self.f0func(ion, q))
 
             if ffsymbol.name.endswith("_0"):
                 self.subs[ffsymbol] = f0

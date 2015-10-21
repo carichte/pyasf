@@ -1,14 +1,14 @@
 import os
 import sympy as sp
+from sympy.utilities import lambdify
+import types
 import urllib
 import cPickle as pickle
 import numpy as np
 import itertools
-import scatfaccoef
 import string
 
 DBPATH = os.path.join(os.path.dirname(__file__), "space-groups.sqlite")
-f0PATH = os.path.join(os.path.dirname(__file__), "f0_lowq.sqlite")
 SETTPATH = os.path.join(os.path.dirname(__file__), "settings.txt")
 
 
@@ -205,6 +205,22 @@ def stay_in_UC(coordinate):
 def hassymb(x):
     return x.has(sp.Symbol)
 
+
+dictcall = lambda self, d: self.__call__(*[d.get(k, d.get(k.name, k)) for k in self.kw])
+
+def makefunc(expr, mathmodule = "numpy"):
+    symbols = list(expr.atoms(sp.Symbol))
+    symbols.sort(key=str)
+    func = lambdify(symbols, expr, mathmodule, dummify=False)
+    func.kw = symbols
+    func.expr = expr
+    func.kwstr = map(lambda x: x.name, symbols)
+    func.dictcall = types.MethodType(dictcall, func)
+    func.__doc__ = str(expr)
+    return func
+
+
+
 def full_transform_old(Matrix, Tensor):
     """
         Transforms the Tensor to Representation in new Basis with given Transformation Matrix.
@@ -368,34 +384,4 @@ def debye_phi(v):
         phi = (sp.mpmath.fp.polylog(2, np.exp(v.real)) - v**2/2. + v*np.log(1-np.exp(v)) -  np.pi**2/6.)
     return (phi/v).real
 #debye_phi_v = np.vectorize(debye_phi)
-
-def calc_f0(ion, q): # q is 2 sin(theta)/lambda
-    """
-        Calculates the nonresonant scattering factor for elements and common ions
-        in the range of sin(theta)/lambda < 2.0 per Angstrom.
-        
-        The input q corresponds to 2*sin(theta)/lambda and can be a symbolic value.
-    """
-    x = q/2.
-    if np.any(x>2)==True:
-        print("Warning: the used expansion only gives a good agreement for values "\
-               "sin(theta)/lambda < 2 A^-1. The value entered (%g) exceeds this"%np.max(x))
-    import sympy
-    if ion not in scatfaccoef.f0:
-        element = ion.strip(string.digits + "+-") # strip valence info
-        if element in scatfaccoef.f0:
-            print("Warning: ion %s not found in database. Trying uncharged state: %s"%(ion, element))
-            ion = element
-    coef = scatfaccoef.f0[ion]
-    a = sympy.Matrix(coef[0:4])
-    b = sympy.Matrix(coef[4:8])
-    c = coef[8]
-    #print a, b, c
-    #return  (a,(-b*(q/2)**2).applyfunc(sympy.exp)) # + c
-    f0 = lambda val: sum(a.multiply_elementwise((-b*val**2).applyfunc(sympy.exp))) + c
-    if isinstance(q, np.ndarray):
-        f0 = np.vectorize(f0)
-    return f0(x)
-    
-    
 
