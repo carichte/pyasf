@@ -394,6 +394,7 @@ class unit_cell(object):
             # M0 transforms the tensor from cartesian system to
             # crystal units allowing us to apply symmetry from ITC:
             self.AU_formfactorsDD[label] = full_transform(self.M0, f_DD)
+            self.AU_formfactorsDDc[label] = f_DD
             # transformation to lattice units:
             # self.AU_formfactorsDD[label] = full_transform(self.B_0.inv().T, f_DD)
 
@@ -410,6 +411,7 @@ class unit_cell(object):
             applymethod(f_DQ, "simplify")
             # transformation to lattice units:
             self.AU_formfactorsDQ[label]  = full_transform(self.M0, f_DQ)
+            self.AU_formfactorsDQc[label] = f_DQ
             #self.AU_formfactorsDQ[label] = full_transform(self.B_0, f_DQ)
             # transformation to lattice units:
             #self.AU_formfactorsDQ[label] = full_transform(self.B_0.inv().T, f_DQ)
@@ -685,8 +687,8 @@ class unit_cell(object):
             
             if equations:
                 ffSym = set()
-                ffSym.update(np.ravel(self.AU_formfactorsDD.get(label, 0)))
-                ffSym.update(np.ravel(self.AU_formfactorsDQ.get(label, 0)))
+                ffSym.update(np.ravel(self.AU_formfactorsDDc.get(label, 0)))
+                ffSym.update(np.ravel(self.AU_formfactorsDQc.get(label, 0)))
                 ffSym.discard(0)
                 symmetries =  sp.solve( equations, ffSym, dict=True, manual=True)
                 self._symmetries[label] = symmetries = symmetries[0]
