@@ -30,8 +30,9 @@ class FormFactors(object):
         assert default_table in self._supported_tables, "Invalid default table"
         self.f0func = dict()
         self.qmax = dict()
-        self._default_table = default_table
-        self._mathmodule = mathmodule
+        self._currtable = dict()
+        self.default_table = default_table
+        self._mathmodule = np
         
         self.supported_species = dict(
             ITC = scatfaccoef.f0.keys(),
@@ -56,14 +57,20 @@ class FormFactors(object):
     
     def add_f0(self, species, table=None):
         if table not in self._supported_tables:
-            for table in [self._default_table] + self._supported_tables:
+            found = False
+            for table in [self.default_table] + self._supported_tables:
                 if species not in self.supported_species[table]:
                     print("Warning: Species %s not found in %s, trying other " 
                           "table."%(species, table))
                 else:
+                    found = True
                     break
+            if not found:
+                raise ValueError("Species %s not found in databases"%species)
         
-        return getattr(self, "_add_f0_%s"%table)(species)
+        r = getattr(self, "_add_f0_%s"%table)(species)
+        self._currtable[species] = table
+        return r
     
     def _add_f0_ITC(self, species):
         assert species in scatfaccoef.f0, \
@@ -94,4 +101,16 @@ class FormFactors(object):
         self.qmax[species] = q.max()
         self.f0func[species] = scipy.interpolate.interp1d(q, f0, kind="cubic")
     
-        
+    def clear(self):
+        """
+            Clear the cached form factors
+        """
+        self.f0func.clear()
+    
+    def __repr__(self):
+        s = super(FormFactors, self).__repr__() + os.linesep
+        s += "In cache:" + os.linesep
+        for ff in self.f0func:
+            s += "%6s   from %s database."%(ff, self._currtable[ff])
+            s += "   2*sin(theta)/lambda < %.1f%s"%(self.qmax[ff], os.linesep)
+        return s

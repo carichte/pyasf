@@ -689,7 +689,8 @@ class unit_cell(object):
                 ffSym = set()
                 ffSym.update(np.ravel(self.AU_formfactorsDDc.get(label, 0)))
                 ffSym.update(np.ravel(self.AU_formfactorsDQc.get(label, 0)))
-                ffSym.discard(0)
+                ffSym = filter(lambda s: s.is_Symbol, ffSym)
+                #ffSym = [Sym S in self.S.iteritems() if k.startswith("f_")]
                 symmetries =  sp.solve( equations, ffSym, dict=True, manual=True)
                 self._symmetries[label] = symmetries = symmetries[0]
                 if self.DEBUG:
