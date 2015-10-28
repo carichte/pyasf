@@ -1,0 +1,6 @@
+[array([0, 0, 0.278720000000000], dtype=object),
+ array([0, 0, 0.778720000000000], dtype=object),
+ array([2/3, 1/3, 0.612053333333333], dtype=object),
+ array([2/3, 1/3, 0.112053333333333], dtype=object),
+ array([1/3, 2/3, 0.945386666666667], dtype=object),
+ array([1/3, 2/3, 0.445386666666667], dtype=object)]
