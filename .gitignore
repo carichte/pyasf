@@ -10,3 +10,4 @@ trash/
 build/
 test/
 .trash
+.ipynb_checkpoints
