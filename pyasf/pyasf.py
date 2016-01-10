@@ -278,6 +278,7 @@ class unit_cell(object):
         if self.sg_sym!=None:
             self.transform = transform = get_ITA_settings(self.sg_num)[self.sg_sym]
         metrik = get_cell_parameters(self.sg_num, self.sg_sym)
+        self._metrik = metrik
         self.a, self.b, self.c, self.alpha, self.beta, self.gamma, self.system = metrik
         
         recparam = get_rec_cell_parameters(*metrik[0:6])
@@ -854,7 +855,7 @@ class unit_cell(object):
         return self.SumFormula
     
     def calc_structure_factor(self, miller=None, DD=True, DQ=True, Temp=True, 
-                                    subs=False, evaluate=False, Uaniso=True):
+                                    subs=False, subs_U=False, evaluate=False, Uaniso=True):
         """
             Takes the three Miller-indices of Type int and calculates the 
             Structure Factor in reciprocal basis.
@@ -880,7 +881,9 @@ class unit_cell(object):
         for label in self.positions: # get position, formfactor and symmetry if DQ tensor
             o = self.occupancy[label]
             if Uaniso:
-                pass
+                if subs_U and label in self.Uaniso:
+                    Uval = self.Uaniso[label]
+                    self.subs.update(zip(sp.flatten(self.U[label]), map(float, sp.flatten(Uval))))
             else:
                 Uval = self.Uiso[label]
             for i, r in enumerate(self.positions[label]):
@@ -915,10 +918,10 @@ class unit_cell(object):
         
         self.q = self.qfunc.dictcall(self.subs)
         self.d = 1/self.q
-        self.theta = sp.asin(12398./(2*self.d*self.energy))
+        self.theta = sp.asin(self.eV_A/(2*self.d*self.energy))
 
-        #if subs:
-        #    self.F_0 = self.F_0.subs(cs.subs)
+        if subs:
+            self.F_0 = self.F_0.subs(self.subs)
         if evaluate:
             self.F_0 = self.F_0.n().expand()
         
@@ -975,7 +978,10 @@ class unit_cell(object):
             raise ValueError("No Reflection initialized. "
                              " Run self.calc_structure_factor() first.")
         # now the structure factors in a cartesian system follow
-        self.Fc_0 = self.F_0.n().simplify()
+        if simplify:
+            self.Fc_0 = self.F_0.n().simplify()
+        else:
+            self.Fc_0 = self.F_0
         if AAS:
             #self.Fc_DD = full_transform(B_0_inv, self.F_DD) # RLU
             #self.Fc_DQ = full_transform(B_0_inv, self.F_DQ) # RLU
@@ -1037,7 +1043,9 @@ class unit_cell(object):
             self.Fd_DQsc = full_transform(self.Q.T, self.Fc_DQsc)
         self.Q = sp.Matrix(self.Q)
         self.Gd = self.Q * Gc
-        
+    
+    
+    
     def transform_rec_lat_vec(self, miller, psi=0, inv=False):
         assert len(miller)==3, "Input has to be vector of length 3."
         miller = sp.Matrix(miller)
@@ -1054,16 +1062,17 @@ class unit_cell(object):
         return UB * miller
     
     
-    def theta_degrees(self, energy=None, h=None, k=None, l=None):
+    def theta_degrees(self, energy=None, h=None, k=None, l=None, rad=False):
         """
             Returns the Bragg angle (theta) in degree for a given energy in eV.
         """
-        if energy!=None:
-            self.subs[self.energy] = energy
-        subs = zip(self.G, (h,k,l))
+        subs = zip(self.miller, (h,k,l))
         subs = filter(lambda x: x[1]!=None, subs)
         subs = dict(subs)
-        return sp.N(self.theta.subs(self.subs).subs(subs) * 180/sp.pi)
+        if energy!=None:
+            subs[self.energy] = energy
+        fac = 180/sp.pi if not rad else 1
+        return sp.N(self.theta.subs(subs).subs(self.subs) * fac)
     
     
     def calc_scattered_amplitude(self, psi=None, assume_imag=False, assume_real=False,
@@ -1075,7 +1084,7 @@ class unit_cell(object):
             self.S[psi.name] = psi
         
         sigma = sp.Matrix([0,0,1])
-        k = self.energy / 12398.42
+        k = self.energy / self.eV_A
         self.k_plus = 2 * k * sp.cos(self.theta)
         pi_i = sp.Matrix([sp.cos(self.theta),  sp.sin(self.theta), 0])
         pi_s = sp.Matrix([sp.cos(self.theta), -sp.sin(self.theta), 0])
@@ -1376,8 +1385,8 @@ class unit_cell(object):
         self.f.clear()
         f = self.f
         
-        if not isinstance(energy, np.ndarray):
-            energy = np.array(energy, dtype=float, ndmin=1)
+        #if not isinstance(energy, np.ndarray):
+        energy = np.array(energy, dtype=float, ndmin=1)
         
         ### get dispersion correction:
         f1f2 = self.get_f1f2_isotropic(energy, fwhm_ev, table)
@@ -1789,4 +1798,279 @@ class unit_cell(object):
             return coordfunc[key](psi2, energy, **kwargs)
         
         return coordinates
+    
+    def ThreeBeamDiffraction(self,miller, psi, energy, qmax=1, **SF_kwargs):
+        """
+            Calculates azimuthal (Renninger) scan profiles in the three 
+            beam approximation
+            http://dx.doi.org/10.1107/S0108767396011117
+        """
+        SF_defaults = dict(DD=False, DQ=False, subs=True, evaluate=True, 
+                           subs_U=True)
+        SF_defaults.update(SF_kwargs)
+        AAS = SF_defaults["DD"] or SF_defaults["DQ"]
+        print("Calculating all structure factors...")
+        self.calc_structure_factor(**SF_defaults)
+        
+        F_0 = self.DAFS(energy, (0,0,0), force_refresh=False) # transmitted beam
+        F_eff = self.DAFS(energy, miller, force_refresh=False) # align for primary reflection
+        print("Transforming to diffractometer system...")
+        self.transform_structure_factor(AAS=AAS, subs=SF_defaults["subs"], simplify=False)
+        
+        psi = np.array(psi, dtype=float, ndmin=1)[:,None] # rotation around lattice plane normal
+        psisym = sp.Symbol("psi", real=True) # the same as a symbol
+        F_0_sym = sp.Symbol("F_0", complex=True) # a symbol for transmitted beam
+        theta = self.theta_degrees(None, *miller, rad=True) # bragg angle
+        
+        sigma_0 = sp.Matrix([0,0,1]) # perpendicular polarization
+        pi_0 = sp.Matrix([sp.cos(theta),  sp.sin(theta), 0]) # parallel polarization incident beam
+        pi_h = sp.Matrix([sp.cos(theta), -sp.sin(theta), 0]) # parallel polarization scattered beam
+        
+        k = self.energy / self.eV_A # wavevector
+        
+        vec_k_i = sp.Matrix([-sp.sin(theta), sp.cos(theta), 0]) # direction of incident wavevector
+        vec_k_s = sp.Matrix([ sp.sin(theta), sp.cos(theta), 0]) # direction of scattered wavevector
+        self.vec_k_i, self.vec_k_s = vec_k_i, vec_k_s
+        # introduce rotational matrix
+        self.Psi = Psi = np.array([[1,            0,           0],
+                                   [0,  sp.cos(psisym), sp.sin(psisym)],
+                                   [0, -sp.sin(psisym), sp.cos(psisym)]])
+        
+        subs = [(sym, self.subs[sym]) for sym in self._metrik if sym in self.subs]
+        self.g_psi = g_psi = Psi * self.Q * self.Gc.subs(subs) # general 2nd reflection, symbolic
+        
+        K_g = k*vec_k_i + g_psi # wave vector for reflection g (K(h_m)), symbolic
+        Vc = self.V.subs(self.subs)
+        Gamma = self.electron_radius*1e10 / (k**2 * sp.pi * Vc)
+        R_g = k**2 / K_g.dot(K_g) - (1 + Gamma * F_0_sym) # symbolic
+        self.R_g = R_g
+        
+        
+        self.pi_g = pi_g = K_g.cross(sigma_0).normalized() 
+        self.sigma_g = sigma_g = pi_g.cross(K_g).normalized()
+        
+        # polarization matrizes:
+        One = sp.Symbol("One") # dummy
+        Ones = np.ones_like(energy)
+        # polarization matrizes:
+        alpha_0h = sp.Matrix([[One,          0], 
+                              [0, pi_0.dot(pi_h)]])
+        
+        alpha_0g = sp.Matrix([[sigma_0.dot(sigma_g),              0], 
+                              [   pi_0.dot(sigma_g), pi_0.dot(pi_g)]])
+
+        alpha_gh = sp.Matrix([[sigma_g.dot(sigma_0), sigma_g.dot(pi_h)], 
+                              [   pi_g.dot(sigma_0),    pi_g.dot(pi_h)]])
+        
+        alpha_0h2 = alpha_0g*alpha_gh
+        
+        ecmplx = sp.Symbol("epsilon_c", complex=True)
+        R_g_f = makefunc(R_g.subs(self.energy, ecmplx), "numpy")
+        alpha_0h_f = makefunc(alpha_0h, "numpy")
+        #alpha_gh_f = makefunc(alpha_gh, "numpy")
+        alpha_gh_fs = makeufunc((alpha_gh[0,1]**2 + alpha_gh[1,1]**2))
+        alpha_gh_fp = makeufunc((alpha_gh[0,1]**2 + alpha_gh[1,1]**2))
+        alpha_0h2_fss = makeufunc((alpha_0h2)[0,0])
+        alpha_0h2_fsp = makeufunc((alpha_0h2)[0,1])
+        alpha_0h2_fps = makeufunc((alpha_0h2)[1,0])
+        alpha_0h2_fpp = makeufunc((alpha_0h2)[1,1])
+        
+        Gamma = makefunc(Gamma, "numpy")(epsilon=energy)
+        
+        print("chi0 = ",(-Gamma * F_0))
+        #self.alpha_0h = alpha_0h
+        #self.alpha_gh = alpha_gh
+        
+        energyc = np.array(energy, dtype=complex)
+        subs = dict(epsilon=energy, epsilon_c=energyc, One=Ones,
+                    h=miller[0], k=miller[1], l=miller[2],
+                    F_0=F_0, psi=psi)
+        #self._subs = subs
+        
+        Ns = Np = 1.
+        F_eff = np.ravel(alpha_0h_f.dictcall(subs))[:,None,None] * np.ones_like(psi) * F_eff
+        R_h = 1./R_g_f.dictcall(subs)
+        for g in self.iter_rec_space(qmax, independent=False):
+            if g==(0,0,0):
+                continue
+            print g,
+            subs.update(zip(self.miller, g))
+            hg = tuple(miller[i] - g[i] for i in xrange(3))
+            if hg==(0,0,0):
+                continue
+            #F_g  = self.DAFS(energy,  g, force_refresh=False)
+            self.f.update(zip(self.miller, np.array([g, hg]).T[:,None]))
+            F_g, F_hg  = self.F_0_func.dictcall(self.f).T
+            #F_hg = self.DAFS(energy, hg, force_refresh=False)
+            #self.f.update(zip(self.miller, hg))
+            #F_hg = self.F_0_func.dictcall(self.f)
+            if abs(F_g).max()<1e-6 or abs(F_hg).max()<1e-6:
+                print "skipped"
+                continue
+            else:
+                    print ""
+            R_g = 1./R_g_f.dictcall(subs)
+            #print R_g.max(), R_g.min()
+            F12 = Gamma * R_g*F_g*F_hg
+            F_eff[0] += alpha_0h2_fss.dictcall(subs) * F12
+            F_eff[1] += alpha_0h2_fsp.dictcall(subs) * F12
+            F_eff[2] += alpha_0h2_fps.dictcall(subs) * F12
+            F_eff[3] += alpha_0h2_fpp.dictcall(subs) * F12
+            
+            
+            fac = (Gamma*F_hg)**2 * R_g * R_h
+            Ns -= alpha_gh_fs.dictcall(subs) * fac
+            Np -= alpha_gh_fp.dictcall(subs) * fac
+        
+        self.F_eff = F_eff
+        self.Ns = Ns
+        self.Np = Np
+        F_eff *= Gamma * R_h
+        F_eff[0] /= Ns
+        F_eff[2] /= Ns
+        F_eff[1] /= Np
+        F_eff[3] /= Np
+        
+        return F_eff
+
+    def ThreeBeamDiffraction_slow(self,miller, psi, energy, qmax=1, **SF_kwargs):
+        """
+            Calculates azimuthal (Renninger) scan profiles in the three 
+            beam approximation
+            http://dx.doi.org/10.1107/S0108767396011117
+        """
+        SF_defaults = dict(DD=False, DQ=False, subs=True, evaluate=True, 
+                           subs_U=True)
+        SF_defaults.update(SF_kwargs)
+        AAS = SF_defaults["DD"] or SF_defaults["DQ"]
+        print("Calculating all structure factors...")
+        self.calc_structure_factor(**SF_defaults)
+        
+        F_0 = self.DAFS(energy, (0,0,0), force_refresh=False) # transmitted beam
+        F_eff = self.DAFS(energy, miller, force_refresh=False) # align for primary reflection
+        print("Transforming to diffractometer system...")
+        self.transform_structure_factor(AAS=AAS, subs=SF_defaults["subs"], simplify=False)
+        
+        psi = np.array(psi, dtype=float, ndmin=1)[:,None] # rotation around lattice plane normal
+        psisym = sp.Symbol("psi", real=True) # the same as a symbol
+        F_0_sym = sp.Symbol("F_0", complex=True, real=False, imaginary=False) # a symbol for transmitted beam
+        theta = self.theta_degrees(None, *miller, rad=True) # bragg angle
+        
+        sigma_0 = sp.Matrix([0,0,1]) # perpendicular polarization
+        pi_0 = sp.Matrix([sp.cos(theta),  sp.sin(theta), 0]) # parallel polarization incident beam
+        pi_h = sp.Matrix([sp.cos(theta), -sp.sin(theta), 0]) # parallel polarization scattered beam
+        
+        k = self.energy / self.eV_A # wavevector
+        
+        vec_k_i = sp.Matrix([-sp.sin(theta), sp.cos(theta), 0]) # direction of incident wavevector
+        vec_k_s = sp.Matrix([ sp.sin(theta), sp.cos(theta), 0]) # direction of scattered wavevector
+        self.vec_k_i, self.vec_k_s = vec_k_i, vec_k_s
+        # introduce rotational matrix
+        self.Psi = Psi = np.array([[1,            0,           0],
+                                   [0,  sp.cos(psisym), sp.sin(psisym)],
+                                   [0, -sp.sin(psisym), sp.cos(psisym)]])
+        
+        subs = [(sym, self.subs[sym]) for sym in self._metrik if sym in self.subs]
+        self.g_psi = g_psi = Psi * self.Q * self.Gc.subs(subs) # general 2nd reflection, symbolic
+        
+        K_g = k*vec_k_i + g_psi # wave vector for reflection g (K(h_m)), symbolic
+        Vc = self.V.subs(self.subs)
+        Gamma = self.electron_radius*1e10 / (k**2 * sp.pi * Vc)
+        R_g = k**2 / K_g.dot(K_g) - (1 + Gamma * F_0_sym) # symbolic
+        self.R_g = R_g
+        
+        
+        
+        #K_g_norm = K_g.normalized()
+        
+        #self.K_g_s = K_g.dot(sigma_0)
+        #self.K_g_p0 = K_g.dot(pi_0)
+        #self.K_g_ph = K_g.dot(pi_h)
+        
+        self.pi_g = pi_g = K_g.cross(sigma_0).normalized() 
+        self.sigma_g = sigma_g = pi_g.cross(K_g).normalized()
+        
+        One = sp.Symbol("One") # dummy
+        Ones = np.ones_like(energy)
+        # polarization matrizes:
+        alpha_0h = sp.Matrix([[One,          0], 
+                              [0, pi_0.dot(pi_h)]])
+        
+        alpha_0g = sp.Matrix([[sigma_0.dot(sigma_g),              0], 
+                              [   pi_0.dot(sigma_g), pi_0.dot(pi_g)]])
+
+        alpha_gh = sp.Matrix([[sigma_g.dot(sigma_0), sigma_g.dot(pi_h)], 
+                              [   pi_g.dot(sigma_0),    pi_g.dot(pi_h)]])
+        
+        unity = sp.Matrix([[One,   0], 
+                           [  0, One]])
+        
+        
+        R_g_f = makefunc(R_g, "numpy")
+        alpha_0h_f = makefunc(alpha_0h, "numpy")
+        alpha_0g_f = makefunc(alpha_0g, "numpy")
+        alpha_gh_f = makefunc(alpha_gh, "numpy")
+        #alpha_0h2_f = makefunc(alpha_0g*alpha_gh, "numpy")
+        Gamma = makefunc(Gamma, "numpy")(epsilon=energy)
+        unity = makefunc(unity, "numpy")
+        
+        print("chi0 = ",(-Gamma * F_0))
+        self.alpha_0h = alpha_0h
+        self.alpha_0g = alpha_0g
+        self.alpha_gh = alpha_gh
+        
+        energy = np.array(energy, dtype=complex)
+        subs = dict(One=Ones, epsilon=energy, 
+                    h=miller[0], k=miller[1], l=miller[2],
+                    F_0=F_0, psi=psi)
+        
+        Ns = Np = 1.
+        F_eff = alpha_0h_f.dictcall(subs) * unity(F_eff)
+        R_h = 1./R_g_f.dictcall(subs)
+        for g in self.iter_rec_space(qmax, independent=False):
+            if g==(0,0,0):
+                continue
+            print g,
+            subs.update(zip(self.miller, g))
+            hg = tuple(miller[i] - g[i] for i in xrange(3))
+            if hg==(0,0,0):
+                continue
+            #F_g  = self.DAFS(energy,  g, force_refresh=False)
+            #F_hg = self.DAFS(energy, hg, force_refresh=False)
+            self.f.update(zip(self.miller, g))
+            F_g  = self.F_0_func.dictcall(self.f)
+            self.f.update(zip(self.miller, hg))
+            F_hg = self.F_0_func.dictcall(self.f)
+            if abs(F_g).max()<1e-6 or abs(F_hg).max()<1e-6:
+                print "skipped"
+                continue
+            else:
+                    print ""
+            R_g = 1./R_g_f.dictcall(subs)
+            #F_eff += alpha_0h2_f.dictcall(subs)* unity(Gamma * R_g*F_g*F_hg)
+            F_eff += alpha_0g_f.dictcall(subs)*alpha_gh_f.dictcall(subs) \
+                   * unity(Gamma * R_g*F_g*F_hg)
+            
+            #print alpha_0g_f.dictcall(subs), alpha_gh_f.dictcall(subs), unity(Gamma * R_g*F_g*F_hg)
+            
+            fac = (Gamma*F_hg)**2 * R_g * R_h
+            tmp = alpha_gh_f.dictcall(subs)
+            Ns -= (tmp[:,0].A**2).sum() * fac
+            Np -= (tmp[:,1].A**2).sum() * fac
+        
+        self.F_eff = F_eff
+        self.Ns = Ns
+        self.Np = Np
+        F_eff = F_eff * unity(Gamma * R_h)
+        F_eff[0,0] /= Ns
+        F_eff[1,0] /= Ns
+        F_eff[0,1] /= Np
+        F_eff[1,1] /= Np
+        
+        
+        return F_eff
+
+
+
+
 

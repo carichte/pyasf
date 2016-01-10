@@ -1,5 +1,6 @@
 import os
 import sympy as sp
+from sympy.utilities.autowrap import ufuncify
 from sympy.utilities import lambdify
 import types
 import urllib
@@ -218,6 +219,22 @@ def makefunc(expr, mathmodule = "numpy"):
     func.dictcall = types.MethodType(dictcall, func)
     func.__doc__ = str(expr)
     return func
+
+class makeufunc(object):
+    def __init__(self, expr):
+        symbols = list(expr.atoms(sp.Symbol))
+        symbols.sort(key=str)
+        self.func = ufuncify(symbols, expr)
+        self.kw = symbols
+        self.expr = expr
+        self.kwstr = map(lambda x: x.name, symbols)
+        self.__doc__ = "f = f(%s)"%(", ".join(self.kwstr))
+    
+    def __call__(self, *args, **kwargs):
+        return self.func(*args, **kwargs)
+    
+    def dictcall(self, d):
+        return self.func(*[d.get(k, d.get(k.name, k)) for k in self.kw])
 
 
 
