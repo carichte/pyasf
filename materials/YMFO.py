@@ -3,10 +3,12 @@ density = 2.85
 SpaceGroup = 55
 
 
-def get_cs(x=0.25, delta=1):
+def get_cs():
     import pyasf
     sp = pyasf.sp
     cs = pyasf.unit_cell(SpaceGroup)
+    delta = sp.Symbol("delta", real=True, nonnegative=True)
+    x = sp.Symbol("x", real=True, nonnegative=True)
     cs.add_atom("Y", (sp.S(0.1344), sp.S(0.1687), 0), 1)
     
     cs.add_atom("FeP", (sp.S(0.3898), sp.S(0.3534), sp.S("1/2")), 0, occupancy =      x*delta) # 4h pyramidal position

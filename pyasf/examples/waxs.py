@@ -11,7 +11,23 @@
 import os
 import pylab as pl
 #from rexs import tools
-import pyasf
+#import pyasf
 
 
-cs = pyasf.unit_cell("9006864")
+#cs = pyasf.unit_cell("9006864")
+from materials import STO
+
+cs = STO.get_cs()
+theta = pl.linspace(5,80,10001)
+
+I = cs.XRD_pattern(theta, 10000.)
+
+pl.plot(theta, I)
+
+pl.xlabel("theta (deg)")
+pl.ylabel("intensity")
+pl.show()
+
+
+
+

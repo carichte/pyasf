@@ -431,7 +431,7 @@ class unit_cell(object):
             pass
         return ion
     
-    def load_cif(self, fname, resonant="", max_denominator=100):
+    def load_cif(self, fname, resonant="", max_denominator=100, blocknr=0):
         """
             Loads a structure from a .cif file.
             See:
@@ -444,7 +444,7 @@ class unit_cell(object):
         """
         try:
             cf = CifFile.ReadCif(fname)
-            self.cif = cif = cf.first_block()
+            self.cif = cif = cf.items()[blocknr][1]
         except Exception as e:
             print("File doesn't seem to be a valid .cif file: %s"%fname)
             raise IOError(e)
@@ -551,7 +551,7 @@ class unit_cell(object):
             self.Uiso[label] = iso
             self.add_atom(label, position, isotropic, assume_complex=True, 
                           occupancy=occ, charge=charge)
-        
+        self.eps = 10**(-len(line._atom_site_fract_x.split(".")[1].split("(")[0]))#)
         
         vr = self.ar, self.br, self.cr
         if cif.has_key("_atom_site_aniso_label"):
@@ -998,9 +998,16 @@ class unit_cell(object):
         else:
             Gc = self.Gc.subs(zip(self.miller, self.hkl()))
         
-        if Gc[1] == 0: phi = 0
-        elif Gc[0] == 0: phi = sp.S("pi/2")*sp.sign(Gc[1])
-        else: phi = sp.atan(Gc[1]/Gc[0])
+        pi = sp.pi
+        if Gc[1] == 0 and Gc[0] == 0: phi = 0
+        elif Gc[1] == 0 and sp.sign(Gc[0])>0: phi = 0
+        elif Gc[1] == 0 and sp.sign(Gc[0])<0: phi = pi
+        elif Gc[0] == 0: phi = sp.sign(Gc[1])*pi/2
+        else:
+            phi = sp.atan(Gc[1]/Gc[0])
+            if sp.sign(Gc[0])<0:
+                phi = phi + pi
+        
         if Gc[2] == 0: xi = 0
         elif Gc[0] == 0 and Gc[1] == 0: xi = sp.S("pi/2")*sp.sign(Gc[2])
         else: xi = sp.atan(Gc[2]/sp.sqrt(Gc[0]**2 + Gc[1]**2))
@@ -1449,11 +1456,13 @@ class unit_cell(object):
             f[ffsymbol] = f1f2[label] + self.f0[ion]
         
         for label in self.U:
-            if label in self.Uaniso:
-                Uval = self.Uaniso[label]
-            else:
-                Uval = sp.eye(3) * self.Uiso[label]
-            self.subs.update(zip(sp.flatten(self.U[label]), map(float, sp.flatten(Uval))))
+            if Uaniso:
+                if label in self.Uaniso:
+                    Uval = self.Uaniso[label]
+                else:
+                    Uval = sp.eye(3) * self.Uiso[label]
+                vald = zip(sp.flatten(self.U[label]), map(float, sp.flatten(Uval)))
+                self.subs.update(filter(lambda s: isinstance(s[0], sp.Symbol), vald))
         
         
         if self.F_0_func != None:
@@ -1799,7 +1808,7 @@ class unit_cell(object):
         
         return coordinates
     
-    def ThreeBeamDiffraction(self,miller, psi, energy, qmax=1, **SF_kwargs):
+    def ThreeBeamDiffraction(self,miller, psi, energy, qmax=1, verbose=True, **SF_kwargs):
         """
             Calculates azimuthal (Renninger) scan profiles in the three 
             beam approximation
@@ -1813,7 +1822,7 @@ class unit_cell(object):
         self.calc_structure_factor(**SF_defaults)
         
         F_0 = self.DAFS(energy, (0,0,0), force_refresh=False) # transmitted beam
-        F_eff = self.DAFS(energy, miller, force_refresh=False) # align for primary reflection
+        F_0h = self.DAFS(energy, miller, force_refresh=False) # align for primary reflection
         print("Transforming to diffractometer system...")
         self.transform_structure_factor(AAS=AAS, subs=SF_defaults["subs"], simplify=False)
         
@@ -1839,10 +1848,13 @@ class unit_cell(object):
         subs = [(sym, self.subs[sym]) for sym in self._metrik if sym in self.subs]
         self.g_psi = g_psi = Psi * self.Q * self.Gc.subs(subs) # general 2nd reflection, symbolic
         
+        print os.linesep,"rez. lattice coords to diffractometer coords:"
+        sp.pprint(self.Q)
+        
         K_g = k*vec_k_i + g_psi # wave vector for reflection g (K(h_m)), symbolic
         Vc = self.V.subs(self.subs)
         Gamma = self.electron_radius*1e10 / (k**2 * sp.pi * Vc)
-        R_g = k**2 / K_g.dot(K_g) - (1 + Gamma * F_0_sym) # symbolic
+        R_g = k**2 / K_g.dot(K_g) - (1 + Gamma*F_0_sym) # symbolic, -Gamma*F(0) = chi(0)
         self.R_g = R_g
         
         
@@ -1853,8 +1865,8 @@ class unit_cell(object):
         One = sp.Symbol("One") # dummy
         Ones = np.ones_like(energy)
         # polarization matrizes:
-        alpha_0h = sp.Matrix([[One,          0], 
-                              [0, pi_0.dot(pi_h)]])
+        #alpha_0h_ss = 1
+        alpha_0h_pp = pi_0.dot(pi_h)
         
         alpha_0g = sp.Matrix([[sigma_0.dot(sigma_g),              0], 
                               [   pi_0.dot(sigma_g), pi_0.dot(pi_g)]])
@@ -1866,9 +1878,9 @@ class unit_cell(object):
         
         ecmplx = sp.Symbol("epsilon_c", complex=True)
         R_g_f = makefunc(R_g.subs(self.energy, ecmplx), "numpy")
-        alpha_0h_f = makefunc(alpha_0h, "numpy")
+        alpha_0h_pp_f = makeufunc(alpha_0h_pp)
         #alpha_gh_f = makefunc(alpha_gh, "numpy")
-        alpha_gh_fs = makeufunc((alpha_gh[0,1]**2 + alpha_gh[1,1]**2))
+        alpha_gh_fs = makeufunc((alpha_gh[0,0]**2 + alpha_gh[1,0]**2))
         alpha_gh_fp = makeufunc((alpha_gh[0,1]**2 + alpha_gh[1,1]**2))
         alpha_0h2_fss = makeufunc((alpha_0h2)[0,0])
         alpha_0h2_fsp = makeufunc((alpha_0h2)[0,1])
@@ -1878,37 +1890,45 @@ class unit_cell(object):
         Gamma = makefunc(Gamma, "numpy")(epsilon=energy)
         
         print("chi0 = ",(-Gamma * F_0))
-        #self.alpha_0h = alpha_0h
-        #self.alpha_gh = alpha_gh
+        
         
         energyc = np.array(energy, dtype=complex)
         subs = dict(epsilon=energy, epsilon_c=energyc, One=Ones,
                     h=miller[0], k=miller[1], l=miller[2],
                     F_0=F_0, psi=psi)
+        
         #self._subs = subs
         
         Ns = Np = 1.
-        F_eff = np.ravel(alpha_0h_f.dictcall(subs))[:,None,None] * np.ones_like(psi) * F_eff
-        R_h = 1./R_g_f.dictcall(subs)
+        F_eff = np.array([0,0,0,1])[:,None,None] * alpha_0h_pp_f(energy) # setup array for pp
+        F_eff[0] += 1 #ss channel
+        F_eff = F_eff * np.ones_like(psi) * F_0h
+        #print F_eff.shape, F_eff.dtype
+        #self.R_h = R_h = 1./R_g_f.dictcall(subs)
+        self.R_h = R_h = 1./(- Gamma*F_0.imag) # lets assume we are in the max. for now. Add detuning later
         for g in self.iter_rec_space(qmax, independent=False):
             if g==(0,0,0):
                 continue
-            print g,
+            if verbose:
+                print g,
             subs.update(zip(self.miller, g))
             hg = tuple(miller[i] - g[i] for i in xrange(3))
             if hg==(0,0,0):
                 continue
             #F_g  = self.DAFS(energy,  g, force_refresh=False)
-            self.f.update(zip(self.miller, np.array([g, hg]).T[:,None]))
-            F_g, F_hg  = self.F_0_func.dictcall(self.f).T
+            twomiller = np.array([g, hg])[:,None].transpose(2,0,1)
+            self.f.update(zip(self.miller, twomiller))
+            F_g, F_hg  = self.F_0_func.dictcall(self.f)
+            #print F_g.shape, F_hg.shape, F_g.dtype, F_hg.dtype
             #F_hg = self.DAFS(energy, hg, force_refresh=False)
             #self.f.update(zip(self.miller, hg))
             #F_hg = self.F_0_func.dictcall(self.f)
             if abs(F_g).max()<1e-6 or abs(F_hg).max()<1e-6:
-                print "skipped"
+                if verbose:
+                    print "skipped"
                 continue
-            else:
-                    print ""
+            elif verbose:
+                print ""
             R_g = 1./R_g_f.dictcall(subs)
             #print R_g.max(), R_g.min()
             F12 = Gamma * R_g*F_g*F_hg
@@ -1916,6 +1936,7 @@ class unit_cell(object):
             F_eff[1] += alpha_0h2_fsp.dictcall(subs) * F12
             F_eff[2] += alpha_0h2_fps.dictcall(subs) * F12
             F_eff[3] += alpha_0h2_fpp.dictcall(subs) * F12
+            #print alpha_0h2_fss.dictcall(subs).shape,alpha_0h2_fss.dictcall(subs).dtype,F12.shape,F_eff.shape,F_eff.dtype
             
             
             fac = (Gamma*F_hg)**2 * R_g * R_h
@@ -1926,14 +1947,13 @@ class unit_cell(object):
         self.Ns = Ns
         self.Np = Np
         F_eff *= Gamma * R_h
-        F_eff[0] /= Ns
-        F_eff[2] /= Ns
-        F_eff[1] /= Np
-        F_eff[3] /= Np
+        F_eff.resize((2,2) + F_eff.shape[1:])
+        F_eff[:,0] /= Ns
+        F_eff[:,1] /= Np
         
         return F_eff
 
-    def ThreeBeamDiffraction_slow(self,miller, psi, energy, qmax=1, **SF_kwargs):
+    def ThreeBeamDiffraction_slow(self,miller, psi, energy, qmax=1, verbose=True, **SF_kwargs):
         """
             Calculates azimuthal (Renninger) scan profiles in the three 
             beam approximation
@@ -2030,7 +2050,8 @@ class unit_cell(object):
         for g in self.iter_rec_space(qmax, independent=False):
             if g==(0,0,0):
                 continue
-            print g,
+            if verbose: 
+                print g,
             subs.update(zip(self.miller, g))
             hg = tuple(miller[i] - g[i] for i in xrange(3))
             if hg==(0,0,0):
@@ -2042,9 +2063,11 @@ class unit_cell(object):
             self.f.update(zip(self.miller, hg))
             F_hg = self.F_0_func.dictcall(self.f)
             if abs(F_g).max()<1e-6 or abs(F_hg).max()<1e-6:
-                print "skipped"
+                if verbose:
+                    print "skipped"
                 continue
             else:
+                if verbose:
                     print ""
             R_g = 1./R_g_f.dictcall(subs)
             #F_eff += alpha_0h2_f.dictcall(subs)* unity(Gamma * R_g*F_g*F_hg)
@@ -2070,7 +2093,64 @@ class unit_cell(object):
         
         return F_eff
 
-
-
-
-
+    
+    def XRD_pattern(self, th_arr, energy, qmax=None, width=0.01, grainsize=44., Lfac = True, Pfac = True):
+        """
+            Calculates the diffraction intensity for all reflections in 
+            a certain range for theta - the Bragg angle.
+            
+            Inputs: 
+                th_arr : numpy.ndarray((n,), float)
+                    Array containing the values of Bragg angles
+                    in degrees
+                energy : float
+                    Photon energy in electron volt
+                qmax : float
+                    maximum value of 2*sin(theta)/lambda taken into 
+                    account
+                width : float
+                    FWHM of experimental broadening in degrees
+                grainsize : float
+                    average grain size of the powder in microns for
+                    additional broadening according to Scherrer equation
+            
+            Outputs:
+                Intensity : numpy.ndarray((n,), float)
+                    Array containing the Intensity value for 
+                    each theta value in arbitrary units
+        """
+        def LP(theta, degrees=True):
+            if degrees:
+                theta = np.radians(theta)
+            L = 1./(4.*np.sin(theta)**2*np.cos(theta)) if Lfac else 1
+            P = (1 + np.cos(2*theta)**2)/2. if Pfac else 1
+            return L*P
+        self._LP = LP
+        
+        th_arr = np.radians(th_arr)
+        width = np.radians(width)**2
+        grainsize *= 1e4 # microns to angstrom
+        if qmax == None:
+            qmax = 2 * energy / 12398.4 * np.sin(th_arr.max())
+        Int = np.zeros_like(th_arr)
+        V = float(self.V.subs(self.subs))
+        self.calc_structure_factor()
+        thetafunc = makeufunc(self.theta)
+        for R in self.iter_rec_space(qmax):
+            #if R == (0,0,0):
+            #    continue
+            #print R,
+            theta = thetafunc(energy, *R)
+            if np.isnan(theta):
+                continue
+            theta = float(theta)
+            #print self.qfunc.dictcall(self.subs)
+            F = self.DAFS(energy, R, force_refresh=False) / V
+            M = len(self.get_equivalent_vectors(R))
+            I = float(abs(F)**2 * M) * LP(th_arr, False)
+            width2 = (0.9 * 12398.4 / ( 2 * energy * grainsize * np.cos(theta)))**2
+            w = width + width2 # broadening
+            w = np.sqrt(w) # /2.3548
+            #print R, w, theta
+            Int += pvoigt(th_arr, theta, I, w, eta=(width/(width + width2)))/w
+        return Int

@@ -11,3 +11,4 @@ build/
 test/
 .trash
 .ipynb_checkpoints
+spacegroup.txt

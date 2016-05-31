@@ -402,3 +402,7 @@ def debye_phi(v):
     return (phi/v).real
 #debye_phi_v = np.vectorize(debye_phi)
 
+def pvoigt(x, x0, amp, fwhm, y0=0, eta=0.5):
+    fwhm /= 2.
+    return y0 + amp *    (eta  / (1+((x-x0)/fwhm)**2) 
+                     + (1-eta) * np.exp(-np.log(2)*((x-x0)/fwhm)**2))
