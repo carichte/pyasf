@@ -122,6 +122,8 @@ def named2darray(array, fields):
 
 
 def mkfloat(string, get_digits=False):
+    if isinstance(string, (float, int, long)):
+        return string
     assert isinstance(string, str), "Invalid input. Need str."
     string = string.strip()
     string = string.replace(",", ".")

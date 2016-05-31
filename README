@@ -18,3 +18,6 @@ Requirements:
     - the package rexs (https://github.com/carichte/rexs)
         is recommended and necessary for DAFS evaluation
 
+
+Todo:
+    - repair missing dispersion etc. for voids (ZA)
