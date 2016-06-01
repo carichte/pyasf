@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from numpy.distutils.core import setup, Extension
+from numpy.distutils.core import setup#, Extension
 import sys
 
 if len(sys.argv)<2:

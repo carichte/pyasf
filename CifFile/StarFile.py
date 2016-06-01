@@ -37,6 +37,8 @@ from types import *
 from urllib import *         # for arbitrary opening
 import re
 import copy
+import collections
+DictType = collections.OrderedDict
 class StarList(list):
     pass
 
@@ -45,7 +47,7 @@ class StarTuple(tuple):
     def __new__(cls,*arglist):
         return tuple.__new__(cls,arglist)
 
-class StarDict(dict):
+class StarDict(collections.OrderedDict):
     pass
 
 class LoopBlock(object):
@@ -791,7 +793,7 @@ class StarPacket(list):
 
 class BlockCollection(object):
     def __init__(self,datasource=None,element_class=StarBlock,type_tag=''):
-        self.dictionary = {}
+        self.dictionary = collections.OrderedDict()
         self.type_tag = type_tag
         self.lower_keys = []              # for efficiency
         self.element_class = element_class
@@ -902,7 +904,7 @@ class BlockCollection(object):
             location = blocknames.index(new_lowerbn)
             del self.dictionary[current_keys[location]]
             self.lower_keys.remove(new_lowerbn)
-        self.dictionary.update({blockname:blockcontents})
+        self.dictionary.update(collections.OrderedDict([(blockname,blockcontents)]))
         self.lower_keys.append(new_lowerbn)
 
     def merge(self,new_bc,mode="strict",single_block=[],
