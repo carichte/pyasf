@@ -433,7 +433,7 @@ class unit_cell(object):
             pass
         return ion
     
-    def load_cif(self, fname, resonant="", max_denominator=100, blocknr=0):
+    def load_cif(self, fname, resonant="", max_denominator=100, blocknr=0, digits=4):
         """
             Loads a structure from a .cif file.
             See:
@@ -553,7 +553,7 @@ class unit_cell(object):
             self.Uiso[label] = iso
             self.add_atom(label, position, isotropic, assume_complex=True, 
                           occupancy=occ, charge=charge)
-        self.eps = 10**(-len(line._atom_site_fract_x.split(".")[1].split("(")[0]))#)
+            self.eps = 10**(-digits)
         
         vr = self.ar, self.br, self.cr
         if cif.has_key("_atom_site_aniso_label"):
@@ -664,23 +664,26 @@ class unit_cell(object):
                     
                     if label in self.AU_formfactorsDD:
                         fDD = self.AU_formfactorsDD[label]
-                        new_DD = full_transform(W, fDD)
+                        new_DD = full_transform(W.inv(), fDD)
+                        #new_DD = full_transform(W, fDD)
                         equations.update((fDD - new_DD).ravel())
                     
                     if label in self.AU_formfactorsDQ:
                         fDQ = self.AU_formfactorsDQ[label]
-                        new_DQ = full_transform(W, fDQ)
+                        new_DQ = full_transform(W.inv(), fDQ)
+                        #new_DQ = full_transform(W, fDQ)
                         equations.update((fDQ - new_DQ).ravel())
                     
                     # U is 2 times contravariant so they transform the same
-                    # way as the basis
-                    # Therefore inverse 
-                    #print W.T, W.inv()
+                    #  way as the basis
+                    #  Therefore inverse 
+                    #print W, W.inv().T
                     #new_U =  full_transform(W.inv(), U)
                     #Uequations.update(np.ravel(new_U - U))
                     if self.DEBUG:
                         print generator
                     new_Beta = full_transform(W.T, Beta)
+                    #new_Beta = full_transform(W.inv().T, Beta)
                     Uequations.update(np.ravel(new_Beta - Beta))
             equations.discard(0)
             Uequations.discard(0)
@@ -786,12 +789,15 @@ class unit_cell(object):
                 if not (ind < self.eps).any():
                     #if new_position not in self.positions[label]:
                     self.Beta[label].append(sp.Matrix(full_transform(W.T, Beta)))
+                    #self.Beta[label].append(sp.Matrix(full_transform(W.inv().T, Beta)))
                     if label in self.AU_formfactors: 
                         self.formfactors[label].append(self.AU_formfactors[label])
                     if label in self.AU_formfactorsDD:
-                        self.formfactorsDD[label].append(full_transform(W, self.AU_formfactorsDD[label]))
+                        #self.formfactorsDD[label].append(full_transform(W, self.AU_formfactorsDD[label]))
+                        self.formfactorsDD[label].append(full_transform(W.inv(), self.AU_formfactorsDD[label]))
                     if label in self.AU_formfactorsDQ:
-                        self.formfactorsDQ[label].append(full_transform(W, self.AU_formfactorsDQ[label]))
+                        #self.formfactorsDQ[label].append(full_transform(W, self.AU_formfactorsDQ[label]))
+                        self.formfactorsDQ[label].append(full_transform(W.inv(), self.AU_formfactorsDQ[label]))
                     self.positions[label].append(new_position)
                     #sp.pprint(self.Beta[label][-1])
                     #sp.pprint(new_position)

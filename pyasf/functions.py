@@ -1,5 +1,12 @@
 import os
 import sympy as sp
+
+try:
+    import mpmath
+    sp.mpmath = mpmath
+except:
+    pass
+
 from sympy.utilities.autowrap import ufuncify
 from sympy.utilities import lambdify
 import types
