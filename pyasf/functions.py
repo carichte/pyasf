@@ -1,5 +1,12 @@
 import os
 import sympy as sp
+
+try:
+    import mpmath
+    sp.mpmath = mpmath
+except:
+    pass
+
 from sympy.utilities.autowrap import ufuncify
 from sympy.utilities import lambdify
 import types
@@ -209,10 +216,10 @@ def hassymb(x):
 
 dictcall = lambda self, d: self.__call__(*[d.get(k, d.get(k.name, k)) for k in self.kw])
 
-def makefunc(expr, mathmodule = "numpy"):
+def makefunc(expr, mathmodule = "numpy", dummify=False):
     symbols = list(expr.atoms(sp.Symbol))
     symbols.sort(key=str)
-    func = lambdify(symbols, expr, mathmodule, dummify=False)
+    func = lambdify(symbols, expr, mathmodule, dummify=dummify)
     func.kw = symbols
     func.expr = expr
     func.kwstr = map(lambda x: x.name, symbols)
@@ -223,7 +230,7 @@ def makefunc(expr, mathmodule = "numpy"):
 class makeufunc(object):
     def __init__(self, expr):
         symbols = list(expr.atoms(sp.Symbol))
-        symbols.sort(key=str)
+        symbols.sort(key=lambda s: s.name)
         self.func = ufuncify(symbols, expr)
         self.kw = symbols
         self.expr = expr
@@ -260,15 +267,16 @@ def full_transform2(Matrix, Tensor):
 
 def full_transform(Matrix, Tensor):
     """
-        Transforms the Tensor to Representation in new Basis with given Transformation Matrix.
+        Transforms the Tensor to Representation in new Basis with given Transformation Matrix
+        (but using somehow the transformed matrix :/).
     """
     Matrix = np.array(Matrix)
     Tensor = np.array(Tensor)
     dtype = np.find_common_type([],[Matrix.dtype, Tensor.dtype])
     Tnew = np.zeros_like(Tensor, dtype = dtype)
-    for ind in itertools.product(*map(range, Tensor.shape)):
-        for inds in itertools.product(*map(range, Tensor.shape)):
-            Tnew[ind] += Tensor[inds] * Matrix[inds, ind].prod()
+    for ind in itertools.product(*map(range, Tensor.shape)): # i
+        for inds in itertools.product(*map(range, Tensor.shape)): #j
+            Tnew[ind] += Tensor[inds] * Matrix[inds, ind].prod() # 
             #print Matrix[inds, ind], Tnew
     return Tnew
 
