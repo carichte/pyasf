@@ -41,6 +41,12 @@ import FormFactors
 
 
 def translate_fdmnes(names):
+    """
+        Function that renames tensor components from
+        FDMNES to the internal notation of pyasf.
+        
+        E.g. I_xyz -> f_dq_z12
+    """
     indices = dict(x=1, y=2, z=3)
     for i,name in enumerate(names):
         sym, ind = name.split("_")
@@ -92,8 +98,22 @@ class _named2darray(np.ndarray):
                 key = Ellipsis, [self._fields.index(k) for k in key]
         return super(_named2darray, self).__setitem__(key, val)
 
+def named2darray(array, fields):
+    assert array.ndim == 2, "Number of dimensions should be 2"
+    assert array.shape[1] == len(fields), \
+            "Number of columns and fields do not match"
+    array = _named2darray(array.shape, 
+                          dtype = array.dtype,
+                          buffer = array)
+    array.set_fields(fields)
+    return array
+
 
 class SymbolDict(dict):
+    """
+        Dictionary class that translates Symbol names as key
+        input to Symbol objects.
+    """
     def __getitem__(self, sym):
         #if not self.has_key(sym) and isinstance(sym, str):
         if not sym in self and isinstance(sym, str):
@@ -109,19 +129,11 @@ class SymbolDict(dict):
         return super(SymbolDict, self).__getitem__(sym)
 
 
-def named2darray(array, fields):
-    assert array.ndim == 2, "Number of dimensions should be 2"
-    assert array.shape[1] == len(fields), \
-            "Number of columns and fields do not match"
-    array = _named2darray(array.shape, 
-                          dtype = array.dtype,
-                          buffer = array)
-    array.set_fields(fields)
-    return array
-
-
 
 def mkfloat(string, get_digits=False):
+    """
+        Simple parser for numeric values in .cif files
+    """
     if isinstance(string, (float, int, long)):
         return string
     assert isinstance(string, str), "Invalid input. Need str."
@@ -141,11 +153,29 @@ def mkfloat(string, get_digits=False):
         return res
 
 def applymethod(Arr, Method, *args):
+    """
+        Function that applies a method inherent to each array
+        element to all array elements.
+        
+        Inputs:
+            Arr : numpy.ndarray
+            Method : str -- the method
+            
+            all further arguments will be passed on to the method
+    """
     for ele in np.nditer(Arr, flags=["refs_ok"], op_flags=['readwrite']):
         if hasattr(ele.item(), Method):
             ele[...] = getattr(ele.item(), Method)(*args)
 
 def applyfunc(Arr, Func):
+    """
+        Function that applies a function to each array
+        element 
+                
+        Inputs:
+            Arr : numpy.ndarray
+            Method : str -- the function
+    """
     for ele in np.nditer(Arr, flags=["refs_ok"], op_flags=['readwrite']):
         ele[...] = Func(ele.item())
 
@@ -169,7 +199,7 @@ class unit_cell(object):
         Elastic X-Ray Scattering (REXS).
         After initialization one can:
             - fill it with atoms (self.add_atom) of the asymmetric unit
-            - reduce degrees of freedom in their atomic scattering tensors
+            - reduce degrees of freedom in their tensor quantities (ADPs, form factors)
               by application of the crystals symmetry (self.get_tensor_symmetry)
             - generate all atoms on symmetry-equivalent sites (self.build_unit_cell)
             - calculate the Structure Factor in reciprocal coordinates up to 
@@ -393,10 +423,10 @@ class unit_cell(object):
             
             ######### Transformation to lattice units:
             # M transforms vector from crystal units in direct space
-            # to the cartesian system. Minv does the opposite.
+            # to the cartesian system. Minv does the opposite. => M.T transforms cartesian tensor to direct tensor
             # M0 transforms the tensor from cartesian system to
             # crystal units allowing us to apply symmetry from ITC:
-            self.AU_formfactorsDD[label] = full_transform(self.M0, f_DD)
+            self.AU_formfactorsDD[label] = full_transform(self.M0, f_DD) # full transform needs the transposed Matrix as input (unfortunately)
             self.AU_formfactorsDDc[label] = f_DD
             # transformation to lattice units:
             # self.AU_formfactorsDD[label] = full_transform(self.B_0.inv().T, f_DD)
@@ -433,7 +463,7 @@ class unit_cell(object):
             pass
         return ion
     
-    def load_cif(self, fname, resonant="", max_denominator=100, blocknr=0):
+    def load_cif(self, fname, resonant="", max_denominator=100, blocknr=0, digits=4):
         """
             Loads a structure from a .cif file.
             See:
@@ -553,7 +583,7 @@ class unit_cell(object):
             self.Uiso[label] = iso
             self.add_atom(label, position, isotropic, assume_complex=True, 
                           occupancy=occ, charge=charge)
-        self.eps = 10**(-len(line._atom_site_fract_x.split(".")[1].split("(")[0]))#)
+            self.eps = 10**(-digits)
         
         vr = self.ar, self.br, self.cr
         if cif.has_key("_atom_site_aniso_label"):
@@ -577,49 +607,7 @@ class unit_cell(object):
                         value /= 2*np.pi**2 * vr[i-1] * vr[j-1] # http://dx.doi.org/10.1107/S0108767396005697
                     Uaniso[i-1,j-1] = Uaniso[j-1,i-1] = value
     
-    
-    
-    def find_symmetry(self, start_sg=230):
-        """
-            Not yet perfect
-        """
-        element_pos = {}
-        for label in self.AU_positions.keys():
-            element = self.elements[label]
-            if element in element_pos:
-                element_pos[element].append(self.AU_positions[label])
-            else:
-                element_pos[element] = [self.AU_positions[label]]
-        if self.DEBUG:
-            print element_pos
-        while start_sg>0:
-            print("Trying space group %i..."%start_sg)
-            UCtest = unit_cell(start_sg)
-            skipSG = False
-            for element in element_pos.keys():
-                positions = np.array(copy.deepcopy(element_pos[element]))
-                num = 1
-                while len(positions)>0 and not skipSG:
-                    UCtest.add_atom(element+str(num), positions[0])
-                    UCtest.build_unit_cell()
-                    for newpos in UCtest.positions[element+str(num)]:
-                        ind = (((newpos - np.array(positions))**2).sum(1))<UCtest.mindist
-                        if sum(ind)==1:
-                            if self.DEBUG:
-                                print "Found", newpos, "in", positions
-                            positions = positions[~ind]
-                        else:
-                            print "Not found", newpos
-                            skipSG = True
-                            break
-                    num+=1
-                if skipSG: break
-            if skipSG:
-                start_sg-=1
-            else:
-                break
-        return UCtest
-    
+        
     def get_tensor_symmetry(self, labels = None):
         """
             Applies Site Symmetries of the Space Group to the Scattering Tensors.
@@ -664,23 +652,26 @@ class unit_cell(object):
                     
                     if label in self.AU_formfactorsDD:
                         fDD = self.AU_formfactorsDD[label]
-                        new_DD = full_transform(W, fDD)
+                        new_DD = full_transform(W.inv(), fDD)
+                        #new_DD = full_transform(W, fDD)
                         equations.update((fDD - new_DD).ravel())
                     
                     if label in self.AU_formfactorsDQ:
                         fDQ = self.AU_formfactorsDQ[label]
-                        new_DQ = full_transform(W, fDQ)
+                        new_DQ = full_transform(W.inv(), fDQ)
+                        #new_DQ = full_transform(W, fDQ)
                         equations.update((fDQ - new_DQ).ravel())
                     
                     # U is 2 times contravariant so they transform the same
-                    # way as the basis
-                    # Therefore inverse 
-                    #print W.T, W.inv()
+                    #  way as the basis
+                    #  Therefore inverse 
+                    #print W, W.inv().T
                     #new_U =  full_transform(W.inv(), U)
                     #Uequations.update(np.ravel(new_U - U))
                     if self.DEBUG:
                         print generator
                     new_Beta = full_transform(W.T, Beta)
+                    #new_Beta = full_transform(W.inv().T, Beta)
                     Uequations.update(np.ravel(new_Beta - Beta))
             equations.discard(0)
             Uequations.discard(0)
@@ -782,16 +773,20 @@ class unit_cell(object):
                 if len(self.positions[label])>0: 
                     ind = ((new_position - np.array(self.positions[label]))**2).sum(1)
                 else:
-                    ind = np.array((1))
+                    ind = np.array((1,))
+                ind = np.array([d for d in ind if np.isscalar(d) or not hassymb(d)])
                 if not (ind < self.eps).any():
                     #if new_position not in self.positions[label]:
                     self.Beta[label].append(sp.Matrix(full_transform(W.T, Beta)))
+                    #self.Beta[label].append(sp.Matrix(full_transform(W.inv().T, Beta)))
                     if label in self.AU_formfactors: 
                         self.formfactors[label].append(self.AU_formfactors[label])
                     if label in self.AU_formfactorsDD:
-                        self.formfactorsDD[label].append(full_transform(W, self.AU_formfactorsDD[label]))
+                        #self.formfactorsDD[label].append(full_transform(W, self.AU_formfactorsDD[label]))
+                        self.formfactorsDD[label].append(full_transform(W.inv(), self.AU_formfactorsDD[label]))
                     if label in self.AU_formfactorsDQ:
-                        self.formfactorsDQ[label].append(full_transform(W, self.AU_formfactorsDQ[label]))
+                        #self.formfactorsDQ[label].append(full_transform(W, self.AU_formfactorsDQ[label]))
+                        self.formfactorsDQ[label].append(full_transform(W.inv(), self.AU_formfactorsDQ[label]))
                     self.positions[label].append(new_position)
                     #sp.pprint(self.Beta[label][-1])
                     #sp.pprint(new_position)
@@ -856,7 +851,7 @@ class unit_cell(object):
         self.get_density()
         return self.SumFormula
     
-    def calc_structure_factor(self, miller=None, DD=True, DQ=True, Temp=True, 
+    def calc_structure_factor(self, miller=None, DD=True, DQ=True, Temp=True, simplify=False,
                                     subs=False, subs_U=False, evaluate=False, Uaniso=True):
         """
             Takes the three Miller-indices of Type int and calculates the 
@@ -926,11 +921,14 @@ class unit_cell(object):
             self.F_0 = self.F_0.subs(self.subs)
         if evaluate:
             self.F_0 = self.F_0.n().expand()
+        if simplify:
+            self.F_0 = self.F_0.simplify()
         
         if self.F_0.has(sp.Symbol):
             self.F_0_func = makefunc(self.F_0)
         else:
             self.F_0_func = None
+                
         # simplify:
         
         if DD:
@@ -1191,6 +1189,7 @@ class unit_cell(object):
     
     
     def get_f1f2_isotropic(self, energy, fwhm_ev=1e-4, table="Sasaki"):
+        energy = np.array(energy, dtype=float, ndmin=1)
         isort = energy.argsort()
         emin, emax = energy[isort[[0, -1]]]
         atoms = list(self.AU_positions)
@@ -1231,8 +1230,11 @@ class unit_cell(object):
                     f1, f2 = xi.get_f1f2_from_db(element, newenergy - dE,
                                                                table=table)
                     if fwhm_ev>0:
-                        f1 = ndimage.gaussian_filter1d(f1, fwhm_ev/2.355)
-                        f2 = ndimage.gaussian_filter1d(f2, fwhm_ev/2.355)
+                        fwhm_steps = fwhm_ev/(newenergy[1] - newenergy[0])
+                        if self.DEBUG:
+                            print fwhm_steps
+                        f1 = ndimage.gaussian_filter1d(f1, fwhm_steps/2.355)
+                        f2 = ndimage.gaussian_filter1d(f2, fwhm_steps/2.355)
                     ff_list.append(f1-Z + 1j*f2)
             self._ftab = interp1d(newenergy, ff_list, kind="linear")
             self._ftab.atoms = atoms
@@ -1463,6 +1465,8 @@ class unit_cell(object):
                     Uval = self.Uaniso[label]
                 else:
                     Uval = sp.eye(3) * self.Uiso[label]
+                if self.DEBUG:
+                    print("Using U values for %s: %s"%(label, str(Uval)))
                 vald = zip(sp.flatten(self.U[label]), map(float, sp.flatten(Uval)))
                 self.subs.update(filter(lambda s: isinstance(s[0], sp.Symbol), vald))
         
@@ -1810,7 +1814,7 @@ class unit_cell(object):
         
         return coordinates
     
-    def ThreeBeamDiffraction(self,miller, psi, energy, qmax=1, verbose=True, **SF_kwargs):
+    def ThreeBeamDiffraction(self,miller, psi, energy, qmax=1, verbose=True, **kwargs):
         """
             Calculates azimuthal (Renninger) scan profiles in the three 
             beam approximation
@@ -1818,13 +1822,17 @@ class unit_cell(object):
         """
         SF_defaults = dict(DD=False, DQ=False, subs=True, evaluate=True, 
                            subs_U=True)
-        SF_defaults.update(SF_kwargs)
+        SF_defaults.update(kwargs)
+        
+        DAFS_kw = ("DD", "DQ", "Temp", "fwhm_ev", "table", "simplify", "subs", "Uaniso")
+        DAFS_kw = dict([(k,v) for k in kwargs.iteritems() if k in DAFS_kw])
+        
         AAS = SF_defaults["DD"] or SF_defaults["DQ"]
         print("Calculating all structure factors...")
         self.calc_structure_factor(**SF_defaults)
         
-        F_0 = self.DAFS(energy, (0,0,0), force_refresh=False) # transmitted beam
-        F_0h = self.DAFS(energy, miller, force_refresh=False) # align for primary reflection
+        F_0 = self.DAFS(energy, (0,0,0), force_refresh=False, **DAFS_kw) # transmitted beam
+        F_0h = self.DAFS(energy, miller, force_refresh=False, **DAFS_kw) # align for primary reflection
         print("Transforming to diffractometer system...")
         self.transform_structure_factor(AAS=AAS, subs=SF_defaults["subs"], simplify=False)
         
@@ -1857,11 +1865,18 @@ class unit_cell(object):
         Vc = self.V.subs(self.subs)
         Gamma = self.electron_radius*1e10 / (k**2 * sp.pi * Vc)
         R_g = k**2 / K_g.dot(K_g) - (1 + Gamma*F_0_sym) # symbolic, -Gamma*F(0) = chi(0)
-        self.R_g = R_g
         
+        if self.DEBUG:
+            self.R_g = R_g
+            self.Gamma = Gamma
         
-        self.pi_g = pi_g = K_g.cross(sigma_0).normalized() 
-        self.sigma_g = sigma_g = pi_g.cross(K_g).normalized()
+        self.K_g = K_g
+        pi_g = K_g.cross(sigma_0)
+        self.pi_g = pi_g = pi_g / sp.sqrt(pi_g[0]**2 + pi_g[1]**2 + pi_g[2]**2) # real norm
+        #self.pi_g = pi_g = pi_g / pi_g.norm()
+        sigma_g = pi_g.cross(K_g)
+        self.sigma_g = sigma_g = sigma_g / sp.sqrt(sigma_g[0]**2 + sigma_g[1]**2 + sigma_g[2]**2) # real norm
+        #self.sigma_g = sigma_g = sigma_g / sigma_g.norm()
         
         # polarization matrizes:
         One = sp.Symbol("One") # dummy
@@ -1880,18 +1895,27 @@ class unit_cell(object):
         
         ecmplx = sp.Symbol("epsilon_c", complex=True)
         R_g_f = makefunc(R_g.subs(self.energy, ecmplx), "numpy")
-        alpha_0h_pp_f = makeufunc(alpha_0h_pp)
+        
+        vectorizer = makeufunc
+        alpha_0h_pp_f = vectorizer(alpha_0h_pp)
         #alpha_gh_f = makefunc(alpha_gh, "numpy")
-        alpha_gh_fs = makeufunc((alpha_gh[0,0]**2 + alpha_gh[1,0]**2))
-        alpha_gh_fp = makeufunc((alpha_gh[0,1]**2 + alpha_gh[1,1]**2))
-        alpha_0h2_fss = makeufunc((alpha_0h2)[0,0])
-        alpha_0h2_fsp = makeufunc((alpha_0h2)[0,1])
-        alpha_0h2_fps = makeufunc((alpha_0h2)[1,0])
-        alpha_0h2_fpp = makeufunc((alpha_0h2)[1,1])
+        alpha_gh_fs = vectorizer((alpha_gh[0,0]**2 + alpha_gh[1,0]**2))
+        alpha_gh_fp = vectorizer((alpha_gh[0,1]**2 + alpha_gh[1,1]**2))
+        alpha_0h2_fss = vectorizer((alpha_0h2)[0,0])
+        alpha_0h2_fsp = vectorizer((alpha_0h2)[0,1])
+        alpha_0h2_fps = vectorizer((alpha_0h2)[1,0])
+        alpha_0h2_fpp = vectorizer((alpha_0h2)[1,1])
+        
+        if self.DEBUG:
+            self.alpha_0h2_fss = alpha_0h2_fss
+            self.alpha_0h2_fsp = alpha_0h2_fsp
+            self.alpha_0h2_fps = alpha_0h2_fps
+            self.alpha_0h2_fpp = alpha_0h2_fpp
         
         Gamma = makefunc(Gamma, "numpy")(epsilon=energy)
         
-        print("chi0 = ",(-Gamma * F_0))
+        if verbose:
+            print("chi0 = ",(-Gamma * F_0))
         
         
         energyc = np.array(energy, dtype=complex)
@@ -1933,11 +1957,24 @@ class unit_cell(object):
                 print ""
             R_g = 1./R_g_f.dictcall(subs)
             #print R_g.max(), R_g.min()
-            F12 = Gamma * R_g*F_g*F_hg
+            F12 = Gamma * R_g * F_g * F_hg
+            if self.DEBUG:
+                smth = np.array([
+                                 alpha_0h2_fss.dictcall(subs),
+                                 alpha_0h2_fsp.dictcall(subs),
+                                 alpha_0h2_fps.dictcall(subs),
+                                 alpha_0h2_fpp.dictcall(subs)
+                                 ])
+                #print("%i NaN values in F12"%np.isnan(F12).sum())
+                for i in range(4):
+                    print("%i NaN values in alpha_%i"%(np.isnan(smth[i]).sum(), i))
+                self._subs = subs
+                
             F_eff[0] += alpha_0h2_fss.dictcall(subs) * F12
             F_eff[1] += alpha_0h2_fsp.dictcall(subs) * F12
             F_eff[2] += alpha_0h2_fps.dictcall(subs) * F12
             F_eff[3] += alpha_0h2_fpp.dictcall(subs) * F12
+                
             #print alpha_0h2_fss.dictcall(subs).shape,alpha_0h2_fss.dictcall(subs).dtype,F12.shape,F_eff.shape,F_eff.dtype
             
             
@@ -2096,7 +2133,8 @@ class unit_cell(object):
         return F_eff
 
     
-    def XRD_pattern(self, th_arr, energy, qmax=None, width=0.01, grainsize=44., Lfac = True, Pfac = True):
+    def XRD_pattern(self, th_arr, energy, qmax=None, width=0.01, grainsize=44.,
+                           Lfac = True, Pfac = True, verbose=False):
         """
             Calculates the diffraction intensity for all reflections in 
             a certain range for theta - the Bragg angle.
@@ -2124,7 +2162,12 @@ class unit_cell(object):
         def LP(theta, degrees=True):
             if degrees:
                 theta = np.radians(theta)
-            L = 1./(4.*np.sin(theta)**2*np.cos(theta)) if Lfac else 1
+            if not Lfac:
+                L = 1
+            elif Lfac == "psd":
+                L = 1. / np.sin(2*theta)
+            else:
+                L = 1./(4.*np.sin(theta)**2*np.cos(theta))
             P = (1 + np.cos(2*theta)**2)/2. if Pfac else 1
             return L*P
         self._LP = LP
@@ -2136,12 +2179,13 @@ class unit_cell(object):
             qmax = 2 * energy / 12398.4 * np.sin(th_arr.max())
         Int = np.zeros_like(th_arr)
         V = float(self.V.subs(self.subs))
-        self.calc_structure_factor()
+        self.calc_structure_factor(subs=True, evaluate=True)
         thetafunc = makeufunc(self.theta)
         for R in self.iter_rec_space(qmax):
             #if R == (0,0,0):
             #    continue
-            #print R,
+            if verbose:
+                print R
             theta = thetafunc(energy, *R)
             if np.isnan(theta):
                 continue
