@@ -1,11 +1,12 @@
 #!/usr/bin/env python
 """
+Cut of Reciprocal Space
+
 Outer Batch file for pyasf.py.
 
 Written by Carsten Richter (carsten.richter@desy.de)
 
 """
-import materials.HPS as hps
 import itertools
 import pylab as pl
 import pyasf
@@ -14,34 +15,40 @@ mydict = dict({"Abs":abs})
 
 
 cs = pyasf.unit_cell("MyBaseFileName_9837.cif")
+cs.get_tensor_symmetry()
+cs.build_unit_cell()
 
-
-hmax = 20
-lmax = 20
 energy = 10000.
-hindizes = range( -hmax, hmax+1)
-lindizes = range( -lmax, lmax+1)
 
-F = cs.get_F0(energy = energy, equivalent=True)
-h, k, l = cs.S["h"], cs.S["k"], cs.S["l"]
-F = F.subs(k,0)
 
 ha = pl.linspace(-2, 2, 801)*10
 la = pl.linspace(-2, 2, 801)*10
 
 Imap = 0 * ha * la[:,pl.newaxis]
-I0 = float(abs(F.subs({h:0, l:0}).n())**2)
+cs.calc_structure_factor()
+I0 = abs(cs.DAFS(energy, (0,0,0), force_refresh=False))**2
 
-for miller in itertools.product(hindizes, lindizes):
-    t0 = time.time()
-    I = float(abs(F.subs({h:miller[0], l:miller[1]}).n())**2)
-    print miller, time.time() - t0
+def gaussian(x, x0, amp, w, y0=0):
+    return amp*pl.exp(-(x-x0)**2/(2*w**2))+y0
+
+lmax = 0
+hmax = 0
+for miller in cs.iter_rec_space(2.5, False):
+    if miller[1] or not any(miller):
+        continue
+    hmax = max(hmax, miller[0])
+    lmax = max(lmax, miller[2])
+    
+    F = cs.DAFS(energy, miller, force_refresh=False)
+    I = abs(F)**2
+    print miller, I
+    
     w = pl.sqrt(I/I0/10.)
     amp = pl.sqrt(I/I0)
     #xy = pl.sqrt((ha - miller[0])**2 + (la[:,pl.newaxis] - miller[1])**2)
-    Imap += et.gaussian(ha, miller[0], amp, w*float(hmax)/lmax, 0) * et.gaussian(la, miller[1], amp, w, 0)[:,pl.newaxis]
+    Imap += gaussian(ha, miller[0], amp, w, 0) * gaussian(la, miller[2], amp, w, 0)[:,pl.newaxis]
 
 
-pl.imshow(Imap, extent=(ha[0], ha[-1], la[0], la[-1]), aspect=float(hmax)/lmax)
+pl.imshow(pl.sqrt(Imap), extent=(ha[0], ha[-1], la[0], la[-1]), aspect=float(hmax)/lmax)
 
 pl.show()

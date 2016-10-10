@@ -331,7 +331,7 @@ class unit_cell(object):
         #    = Minv.T * G 
         self.Gc = self.Minv.T * self.G
         self.Gc.simplify()
-        self.q = self.Gc.norm()
+        self.q = sp.sqrt(self.Gc.dot(self.Gc))
         self.qfunc = makefunc(self.q, sp)
         self.V = sp.sqrt(self.metric_tensor.det())
         
@@ -1473,7 +1473,7 @@ class unit_cell(object):
         
         if self.F_0_func != None:
             F0_func = self.F_0_func
-            f.update(self.subs)
+            f.update(dict(zip(self.subs.keys(), map(float, self.subs.values()))))
         else:
             if simplify:
                 Feval = Feval.simplify()
@@ -1514,6 +1514,7 @@ class unit_cell(object):
         kwargs = self.subs.copy()
         kwargs.update(zip(self.miller, self.miller))
         qfunc = makefunc(self.qfunc.dictcall(kwargs).n(), np.math)
+        self._qfunc = qfunc
         def helper(R):
             if qfunc(*R) > qmax:
                 return False
