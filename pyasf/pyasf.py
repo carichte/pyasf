@@ -434,11 +434,11 @@ class unit_cell(object):
             f_DQ = np.zeros((3,3,3), dtype=object)
             kindices = ("x", "y", "z")
             for h,i,j in itertools.product(ind, ind, ind):
-                if j<=h:
+                if j>=h:
                     Sym = sp.Symbol("f_%s_dq_%s%i%i"%(label, kindices[h], i+1, j+1), **my_ff_args)
                     self.S[Sym.name] = Sym
                     f_DQ[h,i,j] = Sym
-                    if j<h:
+                    if j>h:
                         f_DQ[j,i,h] = Sym
                         # See eq. 12 in Kokubun et al. http://dx.doi.org/10.1103/PhysRevB.82.205206
             applymethod(f_DQ, "simplify")
@@ -1091,13 +1091,22 @@ class unit_cell(object):
             self.S[psi.name] = psi
         
         sigma = sp.Matrix([0,0,1])
-        k = self.energy / self.eV_A
+        if subs:
+            theta = self.theta
+            k = self.energy / self.eV_A
+        else:
+            theta = sp.Symbol("theta_B", real=True)
+            k = sp.Symbol("k", real=True, positive=True)
+            self.S[theta.name] = theta
+            self.S[k.name] = k
+            self.subs[theta] = self.theta
+            self.subs[k] = self.energy / self.eV_A
         self.k_plus = 2 * k * sp.cos(self.theta)
-        pi_i = sp.Matrix([sp.cos(self.theta),  sp.sin(self.theta), 0])
-        pi_s = sp.Matrix([sp.cos(self.theta), -sp.sin(self.theta), 0])
+        pi_i = sp.Matrix([sp.cos(theta),  sp.sin(theta), 0])
+        pi_s = sp.Matrix([sp.cos(theta), -sp.sin(theta), 0])
         
-        vec_k_i = sp.Matrix([-sp.sin(self.theta), sp.cos(self.theta), 0]) #alt
-        vec_k_s = sp.Matrix([ sp.sin(self.theta), sp.cos(self.theta), 0]) #alt
+        vec_k_i = sp.Matrix([-sp.sin(theta), sp.cos(theta), 0]) #alt
+        vec_k_s = sp.Matrix([ sp.sin(theta), sp.cos(theta), 0]) #alt
         self.vec_k_i, self.vec_k_s = vec_k_i, vec_k_s
         # introduce rotational matrix
         self.Psi = Psi = np.array([[1,            0,           0],
@@ -1144,7 +1153,7 @@ class unit_cell(object):
         
         self.Fd = np.eye(3) * self.Fd_psi_0 \
                 + self.Fd_psi_DD \
-                + sp.I * ( np.tensordot(vec_k_i, self.Fd_psi_DQin, axes=(0,0)).squeeze() \
+                + sp.I * k * ( np.tensordot(vec_k_i, self.Fd_psi_DQin, axes=(0,0)).squeeze() \
                          + np.tensordot(vec_k_s, self.Fd_psi_DQsc, axes=(0,0)).squeeze())
         
         self.Fd = sp.Matrix(self.Fd)
