@@ -6,6 +6,7 @@
 *.tar.gz
 *.tar
 *.tgz
+test*
 trash/
 build/
 test/
