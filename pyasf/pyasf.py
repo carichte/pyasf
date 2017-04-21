@@ -629,17 +629,20 @@ class unit_cell(object):
             Beta = U.multiply_elementwise(M_r)
             #Beta = full_transform(self.metric_tensor, Beta) # transform to direct lattice
             position = self.AU_positions[label]
-            for generator in self.generators:
+            for ii, generator in enumerate(self.generators):
                 W = sp.Matrix(generator[:,:3])
                 w = generator[:,3].ravel()
                 #if self.DEBUG: print w, W
                 new_position = W.dot(position) + w
                 new_position = np.array([stay_in_UC(i) for i in new_position])
-                if self.DEBUG: 
-                    print ((new_position - position)**2).sum(), new_position - position
-                #if (new_position == self.AU_positions[label]).all(): #1.8.13
                 dist = ((new_position - position)**2).sum()
-                if dist < self.eps:
+                if self.DEBUG: 
+                    print("Generator #%i"%ii)
+                    print dist, new_position - position
+                #if (new_position == self.AU_positions[label]).all(): #1.8.13
+                if not sp.Expr.has(dist, sp.Symbol) and dist < self.eps:
+                    if self.DEBUG:
+                        print generator
                     # International Tables for Crystallography (2006). Vol. D, ch. 1.1, pp. 3-33
                     # incident polarization is contravariant => f is 2 times covariant
                     # -> first axis in DD
@@ -668,11 +671,13 @@ class unit_cell(object):
                     #print W, W.inv().T
                     #new_U =  full_transform(W.inv(), U)
                     #Uequations.update(np.ravel(new_U - U))
-                    if self.DEBUG:
-                        print generator
                     new_Beta = full_transform(W.T, Beta)
                     #new_Beta = full_transform(W.inv().T, Beta)
+                    if self.DEBUG:
+                        sp.pprint([sp.Matrix(new_Beta),Beta])
                     Uequations.update(np.ravel(new_Beta - Beta))
+                if self.DEBUG:
+                    print(os.linesep*2)
             equations.discard(0)
             Uequations.discard(0)
             self._equations[label] = equations
@@ -877,8 +882,8 @@ class unit_cell(object):
         
         for label in self.positions: # get position, formfactor and symmetry if DQ tensor
             o = self.occupancy[label]
-            if Uaniso:
-                if subs_U and label in self.Uaniso:
+            if Uaniso and label in self.Uaniso:
+                if subs_U:
                     Uval = self.Uaniso[label]
                     self.subs.update(zip(sp.flatten(self.U[label]), map(float, sp.flatten(Uval))))
             else:
@@ -892,7 +897,6 @@ class unit_cell(object):
                         if subs:
                             Beta = Beta.subs(self.subs)
                         DW = sp.exp(-G.dot(Beta.dot(G))*Temp)
-                        
                     else:
                         DW = sp.exp(-2 * sp.pi**2 * self.q**2 * Uval * Temp).subs(self.subs)
                 else:
@@ -1151,10 +1155,14 @@ class unit_cell(object):
 #        applymethod(self.Fd_psi_DQ_out, "conjugate") # only real parameters as in FDMNES!!!!?
         
         
-        self.Fd = np.eye(3) * self.Fd_psi_0 \
-                + self.Fd_psi_DD \
-                + sp.I * k * ( np.tensordot(vec_k_i, self.Fd_psi_DQin, axes=(0,0)).squeeze() \
-                         + np.tensordot(vec_k_s, self.Fd_psi_DQsc, axes=(0,0)).squeeze())
+        self.Fd = np.eye(3) * self.Fd_psi_0
+        
+        if DD:
+            self.Fd_psi_DD
+        
+        if DQ:
+            self.Fd += sp.I * k * ( np.tensordot(vec_k_i, self.Fd_psi_DQin, axes=(0,0)).squeeze() \
+                                  + np.tensordot(vec_k_s, self.Fd_psi_DQsc, axes=(0,0)).squeeze())
         
         self.Fd = sp.Matrix(self.Fd)
         if simplify:
@@ -1421,7 +1429,7 @@ class unit_cell(object):
                 self.calc_structure_factor(miller, DD=DD, DQ=DQ, Temp=Temp,
                                        subs=subs, evaluate=subs, Uaniso=Uaniso)
                 self.calc_scattered_amplitude(simplify=simplify, DD=DD, DQ=DQ,
-                                              subs=subs, Uaniso=Uaniso)
+                                              subs=subs)
             Feval = self.E[channel]
             f_aniso = dict()
             for sym in set.intersection(Feval.atoms(), self.S.values()):
@@ -1434,7 +1442,11 @@ class unit_cell(object):
                 if not label in f_aniso and label in self.f_aniso_func:
                     func = self.f_aniso_func[label]
                     f_aniso[label] = named2darray(func(energy).T, func.components)
-                #if component in f_aniso[label]:
+                if component in f_aniso[label]:
+                    pass
+                elif component[:2]=="dq":
+                    ind = component.split("_")[1]
+                    component = component[:3] + "%s%s%i"%("xyz"[int(ind[2])-1], ind[1], ["x","y","z"].index(ind[0])+1)
                 f[sym] = f_aniso[label][component]
             
             f[self.energy] = energy
@@ -1868,7 +1880,7 @@ class unit_cell(object):
         subs = [(sym, self.subs[sym]) for sym in self._metrik if sym in self.subs]
         self.g_psi = g_psi = Psi * self.Q * self.Gc.subs(subs) # general 2nd reflection, symbolic
         
-        print os.linesep,"rez. lattice coords to diffractometer coords:"
+        print os.linesep,"rec. lattice coords to diffractometer coords:"
         sp.pprint(self.Q)
         
         K_g = k*vec_k_i + g_psi # wave vector for reflection g (K(h_m)), symbolic
@@ -2001,6 +2013,11 @@ class unit_cell(object):
         F_eff[:,1] /= Np
         
         return F_eff
+
+
+
+
+
 
     def ThreeBeamDiffraction_slow(self,miller, psi, energy, qmax=1, verbose=True, **SF_kwargs):
         """
