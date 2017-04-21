@@ -216,10 +216,10 @@ def hassymb(x):
 
 dictcall = lambda self, d: self.__call__(*[d.get(k, d.get(k.name, k)) for k in self.kw])
 
-def makefunc(expr, mathmodule = "numpy", dummify=False):
+def makefunc(expr, mathmodule = "numpy", dummify=False, **kwargs):
     symbols = list(expr.atoms(sp.Symbol))
     symbols.sort(key=str)
-    func = lambdify(symbols, expr, mathmodule, dummify=dummify)
+    func = lambdify(symbols, expr, mathmodule, dummify=dummify, **kwargs)
     func.kw = symbols
     func.expr = expr
     func.kwstr = map(lambda x: x.name, symbols)

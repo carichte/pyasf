@@ -5,6 +5,7 @@
 *~
 *.tar.gz
 *.tar
+*.dat
 *.tgz
 test*
 trash/
