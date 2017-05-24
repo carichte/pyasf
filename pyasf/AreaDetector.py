@@ -60,7 +60,7 @@ class AreaDetector(object):
         rows, cols = self.pixelNum
         rows = np.arange(-rows/2, rows/2)
         cols = np.arange(-cols/2, cols/2)
-        cols, rows = np.meshgrid(rows, cols)
+        cols, rows = np.meshgrid(cols, rows)
         return rows, cols
     
     def get_kprime(self):
@@ -69,7 +69,7 @@ class AreaDetector(object):
         vverti = np.cross(self.poni, vhoriz)
         vverti /= np.linalg.norm(vverti)
         
-        rows,cols = self.get_pixels()
+        rows, cols = self.get_pixels()
         rows = rows * self.pixelsize
         cols = cols * self.pixelsize
         
