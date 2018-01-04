@@ -117,6 +117,7 @@ class ThreeCircleVertical(object):
                     (I<1) for divergence = 1mrad
         """
         debug = kwargs.get("debug", False)
+        simplify = kwargs.get("simplify", False)
         
         SF_defaults = dict(DD=False, 
                            DQ=False, 
@@ -132,11 +133,9 @@ class ThreeCircleVertical(object):
         DAFS_kw = ("DD", "DQ", "Temp", "fwhm_ev", "table", "simplify", "subs", "Uaniso")
         DAFS_kw = dict([(k,v) for k in kwargs.iteritems() if k in DAFS_kw])
         
-        AAS = SF_defaults["DD"] or SF_defaults["DQ"]
         if verbose:
             print SF_defaults
             #print("Calculating all structure factors...")
-        
         
         energy = np.array(energy, dtype=float, ndmin=1)
         #alpha = np.degrees(alpha)
@@ -232,9 +231,12 @@ class ThreeCircleVertical(object):
         # of the angular deviation of the incident wavevector:
         div = vec_k_i.cross(k0)
         # decomposition into vertical and horizontal part:
-        div_v = (div[1]**2/normk0).simplify()
+        div_v = (div[1]**2/normk0)
+        div_h = ((div[0]**2 + div[2]**2)/normk0)
+        if simplify:
+            div_v = div_v.simplify()
+            div_h = div_h.simplify()
         div_v_f = pyasf.makeufunc(div_v)
-        div_h = ((div[0]**2 + div[2]**2)/normk0).simplify()
         div_h_f = pyasf.makeufunc(div_h)
         if debug:
             self._debug["div_h_f"] = div_h_f
@@ -278,12 +280,10 @@ class ThreeCircleVertical(object):
             if abs(F).max() < 1e-4: # discard weak reflections
                 continue
             
-            if debug:
-                print(subs)
-            
             angh = div_h_f.dictcall(subs) # horizontal divergence
             if (angh.min()/(2*var[0])) > 10:
                 continue
+            
             angv = div_v_f.dictcall(subs) # vertical divergence
             if (angv.min()/(2*var[1])) > 10:
                 continue
@@ -305,6 +305,9 @@ class ThreeCircleVertical(object):
                 print("")
             
             im += I # uniform sum over energies
+        
+        if debug:
+            self._debug["subs"] = subs
         
         return Qval.squeeze(), (im*detector.get_projection()).squeeze()
 

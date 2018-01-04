@@ -1511,6 +1511,10 @@ class unit_cell(object):
     
     
     def get_equivalent_vectors(self, v):
+        """
+            Returns all reciprocal lattice vectors that are
+            symmetrically equivalent to v
+        """
         return set([tuple(G[:,:3].T.dot(v)) for G in self.generators])
     
     
@@ -2160,18 +2164,23 @@ class unit_cell(object):
         return F_eff
 
     
-    def XRD_pattern(self, th_arr, energy, qmax=None, width=0.01, grainsize=44.,
+    def XRD_pattern(self, x, energy, xaxis="theta", qmax=None, width=0.01, grainsize=44.,
                            Lfac = True, Pfac = True, verbose=False):
         """
             Calculates the diffraction intensity for all reflections in 
             a certain range for theta - the Bragg angle.
             
             Inputs: 
-                th_arr : numpy.ndarray((n,), float)
-                    Array containing the values of Bragg angles
-                    in degrees
+                x : numpy.ndarray((n,), float)
+                    Array containing the values of Bragg angles. See 
+                    `xaxis` argument
                 energy : float
                     Photon energy in electron volt
+                xaxis : str
+                    Defines how to process the `x` input
+                    One of:
+                        theta  (in degrees)
+                        qcryst (inverse AA)
                 qmax : float
                     maximum value of 2*sin(theta)/lambda taken into 
                     account
@@ -2199,12 +2208,22 @@ class unit_cell(object):
             return L*P
         self._LP = LP
         
-        th_arr = np.radians(th_arr)
+        Lambda = self.eV_A / energy
+        
+        if xaxis == "theta":
+            th_arr = np.radians(x)
+        elif xaxis == "qcryst":
+            th_arr = np.arcsin(x * Lambda / 2)
+        else:
+            raise ValueError("Input for `xaxis` not understood.")
+
         width = np.radians(width)**2
         grainsize *= 1e4 # microns to angstrom
         if qmax == None:
-            qmax = 2 * energy / 12398.4 * np.sin(th_arr.max())
-        Int = np.zeros_like(th_arr)
+            qmax = np.nanmax(2 / Lambda * np.sin(th_arr))
+            if verbose:
+                print("Using max. value 2sin(th)/lambda: %f"%qmax)
+        Int = np.zeros_like(th_arr+energy)
         V = float(self.V.subs(self.subs))
         self.calc_structure_factor(subs=True, evaluate=True)
         thetafunc = makeufunc(self.theta)
@@ -2214,16 +2233,19 @@ class unit_cell(object):
             if verbose:
                 print R
             theta = thetafunc(energy, *R)
-            if np.isnan(theta):
+            if np.all(np.isnan(theta)):
                 continue
-            theta = float(theta)
+            theta = np.float_(theta)
             #print self.qfunc.dictcall(self.subs)
-            F = self.DAFS(energy, R, force_refresh=False) / V
+            F = self.DAFS(energy.ravel(), R, force_refresh=False) / V
+            F = F.reshape(energy.shape)
             M = len(self.get_equivalent_vectors(R))
-            I = float(abs(F)**2 * M) * LP(th_arr, False)
+            I = np.float_(abs(F)**2 * M) * LP(th_arr, False)
             width2 = (0.9 * 12398.4 / ( 2 * energy * grainsize * np.cos(theta)))**2
             w = width + width2 # broadening
             w = np.sqrt(w) # /2.3548
             #print R, w, theta
-            Int += pvoigt(th_arr, theta, I, w, eta=(width/(width + width2)))/w
+            I = pvoigt(th_arr, theta, I, w, eta=(width2/(width2 + width)))/w
+            I[np.isnan(I)] = 0
+            Int += I
         return Int
