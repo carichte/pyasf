@@ -414,3 +414,93 @@ def pvoigt(x, x0, amp, fwhm, y0=0, eta=0.5):
     fwhm /= 2.
     return y0 + amp *    (eta  / (1+((x-x0)/fwhm)**2) 
                      + (1-eta) * np.exp(-np.log(2)*((x-x0)/fwhm)**2))
+
+
+
+def axangle2mat(axis, angle, is_normalized=False):
+    ''' Rotation matrix for rotation angle `angle` around `axis`
+    taken and adapted from transforms3d package
+
+    Parameters
+    ----------
+    axis : 3 element sequence
+       vector specifying axis for rotation.
+    angle : scalar
+       angle of rotation in radians.
+    is_normalized : bool, optional
+       True if `axis` is already normalized (has norm of 1).  Default False.
+
+    Returns
+    -------
+    mat : array shape (3,3)
+       rotation matrix for specified rotation
+
+    Notes
+    -----
+    From: http://en.wikipedia.org/wiki/Rotation_matrix#Axis_and_angle
+    '''
+    x, y, z = axis
+    if not is_normalized:
+        n = sp.sqrt(x*x + y*y + z*z)
+        x = x/n
+        y = y/n
+        z = z/n
+    c = sp.cos(angle); s = sp.sin(angle); C = 1-c
+    xs = x*s;   ys = y*s;   zs = z*s
+    xC = x*C;   yC = y*C;   zC = z*C
+    xyC = x*yC; yzC = y*zC; zxC = z*xC
+    return sp.Matrix([
+            [ x*xC+c,   xyC-zs,   zxC+ys ],
+            [ xyC+zs,   y*yC+c,   yzC-xs ],
+            [ zxC-ys,   yzC+xs,   z*zC+c ]])
+
+
+
+def angle_between(v1, v2):
+    """ Returns the angle in radians between vectors 'v1' and 'v2'::
+
+            >>> angle_between((1, 0, 0), (0, 1, 0))
+            1.5707963267948966
+            >>> angle_between((1, 0, 0), (1, 0, 0))
+            0.0
+            >>> angle_between((1, 0, 0), (-1, 0, 0))
+            3.141592653589793
+    """
+    v1 = sp.Matrix(v1).normalized()
+    v2 = sp.Matrix(v2).normalized()
+    return sp.acos(v1.dot(v2))
+
+
+
+def rotation_from_vectors(v1, v2):
+    """
+        Find the rotation Matrix R that fullfils:
+            R*v2 = v1
+
+        Jur van den Berg,
+        Calculate Rotation Matrix to align Vector A to Vector B in 3d?,
+        URL (version: 2016-09-01): https://math.stackexchange.com/q/476311
+    """
+    v1 = sp.Matrix(v1).normalized()
+    v2 = sp.Matrix(v2).normalized()
+
+    ax = v1.cross(v2)
+    s = ax.norm()
+    c = v1.dot(v2)
+
+    if c==1:
+        return sp.eye(3)
+    if c==-1:
+        return -sp.eye(3)
+
+
+    u1, u2, u3 = ax
+    u_ = sp.Matrix(((  0, -u3,  u2), 
+                    ( u3,   0, -u1),
+                    (-u2,  u1,   0)))
+
+    R = sp.eye(3) - u_ + u_**2 * (1-c)/s**2
+
+    return R
+
+

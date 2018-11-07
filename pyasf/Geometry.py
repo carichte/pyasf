@@ -1,4 +1,5 @@
 import os
+import collections
 import pyasf
 import numpy as np
 import sympy as sp
@@ -303,12 +304,186 @@ class ThreeCircleVertical(object):
                     print("Peak intensity: %g"%I.max()),
                     print("h,k,l: %.3f %.3f %.3f"%tuple(Qval[i].ravel()[imax] for i in xrange(3))),
                 print("")
-            
+
             im += I # uniform sum over energies
-        
+
         if debug:
             self._debug["subs"] = subs
-        
+
         return Qval.squeeze(), (im*detector.get_projection()).squeeze()
+
+
+
+class VerboseDict(dict):
+    def __setitem__(self, key, value):
+        super(VerboseDict, self).__setitem__(key, value)
+        print("%s = "%key)
+        print(sp.pretty(value))
+        print(os.linesep)
+
+
+class SchwarzenbachFlack(object):
+    """
+        J. Appl. Cryst. (1989). 22, 601-605
+        https://doi.org/10.1107/S0021889889008769
+    """
+
+    terms = collections.OrderedDict(
+        hkl="miller indices of reflection",
+        surface="miller indices of surface planes",
+        E="photon energy in eV",
+        thBragg="Bragg angle",
+        psi="azimuthal angle",
+        p="primary beam direction",
+        d="diffracted beam direction",
+        f="the normal to the reflecting planes",
+        g="perpendicular to the scattering plane (p,d,f)",
+        e="intersection of reflecting and scattering plane",
+        q="reference direction defining the azimuthal zero position",
+        efg="metric of the lab frame",
+        Psi="reference direction defining the azimuthal zero position with respect to efg",
+        u="reference direction defining the azimuthal zero position with respect to reciprocal lattice",
+        B="Matrix converting from reciprocal lattice to cartesian coordinates",
+        M="Matrix converting from real lattice to cartesian coordinates",
+        U="Matrix converting from cartesian coordinates to labrame (e,f,g)",
+        UB="Matrix converting from reciprocal lattice to labrame (e,f,g)",
+        f_c="the normal to the reflecting planes in cartesian coordinates",
+        u_c="reference direction defining the azimuthal zero position with respect to cartesian coordinates",
+        alpha="angle between incident beam and crystal surface",
+        beta="angle between diffracted beam and crystal surface",
+        phi="angle between surface and reflecting planes",
+    )
+    def __init__(self, structure):
+        self.structure = structure
+
+        ### Convention:
+        # can be modified
+        # everything will be derived from these:
+        self.e = sp.Matrix((1,0,0))
+        self.f = sp.Matrix((0,1,0))
+        self.g = sp.Matrix((0,0,1))
+
+    def set_geometry(self, miller, surface, psi, energy,
+                           verbose=True, subs=True):
+
+        assert self.e.cross(self.f).dot(self.g) == 1, \
+            "e,f,g Should be right handed"
+
+        output = VerboseDict() if verbose else dict()
+        structure = self.structure
+        structure.calc_structure_factor(miller, DD=False, DQ=False)
+
+        h, k, l = miller
+
+        output["hkl"] = miller
+        output["surface"] = surface
+        output["psi"] = psi
+        output["E"] = energy
+
+        if h==k==l:
+            u = sp.Matrix((h, -h, 0))
+        else:
+            u = sp.Matrix((k-l, l-h, h-k))
+        output["u"] = u
+
+        thBragg = structure.theta_degrees(energy, rad=True)
+        output["thBragg"] = thBragg
+
+        p = -sp.sin(thBragg)*self.f - sp.cos(thBragg)*self.e
+        d =  sp.sin(thBragg)*self.f - sp.cos(thBragg)*self.e
+        output["p"] = p
+        output["d"] = d
+
+        efg = sp.Matrix((self.e.T, self.f.T, self.g.T)) # 3by3 matrix
+        output["efg"] = efg
+
+        Psi = sp.Matrix((sp.sin(psi), 0, sp.cos(psi)))
+        output["Psi"] = Psi
+
+        q_x, q_y, q_z = sp.symbols("q_x q_y q_z", real=True) # unknowns for now
+        qsym = sp.Matrix((q_x, q_y,q_z))
+
+        result = sp.solve(Psi - efg.T * qsym) # find q
+        q = qsym.subs(result)
+        output["q"] = q
+
+        B = structure.Minv.T # first part of UB Matrix
+        M = structure.M # first part of UB Matrix
+        if subs:
+            M = M.subs(structure.subs).n()
+            B = B.subs(structure.subs).n()
+        output["M"] = B
+        output["B"] = B
+
+        f_c = B * sp.Matrix(miller) # f in crystal-fixed cartesian system (f is reciprocal lattice)
+        u_c = M * u # u in crystal-fixed cartesian system (u is direct lattice)
+        f_c = f_c.normalized()
+        u_c = u_c.normalized()
+        output["f_c"] = f_c
+        output["u_c"] = u_c
+
+
+
+        U1 = pyasf.rotation_from_vectors(self.f, f_c)
+        U2 = pyasf.rotation_from_vectors(q, U1*u_c)
+
+        U = U2*U1
+        UB = U*B
+        if subs:
+            U = U.n()
+            UB = UB.n()
+
+        output["U"] = U
+        output["UB"] = UB
+
+
+        surface_d = UB * sp.Matrix(surface) # in SF coordinates
+        alpha = sp.pi/2 - pyasf.angle_between(surface_d, -p) # incidence angle
+        beta  = sp.pi/2 - pyasf.angle_between(surface_d, d) # exit angle
+        output["alpha"] = alpha.n()
+        output["beta"] = beta.n()
+
+        phi  = pyasf.angle_between(surface_d, self.f) # angle between surface and reflecting planes
+        output["phi"] = phi
+
+        self.geometry = output
+        return output
+
+
+
+    def pretty_print(self, outfile=None):
+        if not hasattr(self, "geometry"):
+            raise ValueError("Geometry not set.")
+
+        g = self.geometry
+
+        output = ""
+        for key in self.terms:
+            definition = self.terms[key]
+            if key in "e f g":
+                value = getattr(self, key)
+            else:
+                value = g[key]
+            if "angle" in definition.split():
+                value = sp.deg(value).n()
+                key += " (deg)"
+            output += "%s:"%definition
+            output += os.linesep
+            output += "%s ="%key
+            output += os.linesep
+            output += sp.pretty(value)
+            output += os.linesep*3
+
+        if outfile is None:
+            print(output)
+            return
+
+        with open(outfile, "w") as fh:
+            fh.write(output.encode("utf-8"))
+
+
+
+
+
 
 

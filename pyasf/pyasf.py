@@ -299,11 +299,10 @@ class unit_cell(object):
         elif os.path.isfile(structure) and \
              os.path.splitext(structure)[1].lower()==".cif":
             self.load_cif(structure, resonant, **kwargs)
-                    
         else:
             raise IOError("Invalid input for structure. Has to be either space group number or path to .cif-file")
-            
-    
+
+
     def _init_lattice(self, sg_num):
         self.sg_num = sg_num
         self.generators = map(np.array, get_generators(self.sg_num, self.sg_sym)) # fetch the space group generators
@@ -334,11 +333,11 @@ class unit_cell(object):
         self.q = sp.sqrt(self.Gc.dot(self.Gc))
         self.qfunc = makefunc(self.q, sp)
         self.V = sp.sqrt(self.metric_tensor.det())
-        
+
     def add_atom(self, label, position, isotropic=True, assume_complex=True, dE=0, occupancy=1, charge=None):
         """
             Method to fill the asymmetric unit with atoms.
-            
+
             Inputs:
             -------
                 label : string
