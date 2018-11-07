@@ -260,10 +260,10 @@ class unit_cell(object):
         self.AU_formfactorsDQc = {} # only asymmetric unit, dipolar-quadrupolar interference, cartesian
         self.miller = sp.symbols("h k l", integer=True)
         self.subs = SymbolDict()
-        self.energy = sp.Symbol("epsilon", real=True)
+        self.energy = sp.Symbol("epsilon", real=True, positive=True)
         self.subs.update(dict(zip(self.miller, self.miller)))
         self.S = dict([(s.name, s) for s in self.miller]) # dictionary of all symbols
-        self.S["q"] = sp.Symbol("q", real=True)
+        self.S["q"] = sp.Symbol("q", real=True, positive=True)
         self.elements = {}
         self.Uiso = collections.defaultdict(float)
         self.Uaniso = {}
@@ -389,7 +389,7 @@ class unit_cell(object):
         U = sp.zeros(3,3)
         for i,j in itertools.product(ind, ind):
             if i<=j: 
-                Sym = sp.Symbol("U_%s_%i%i"%(label, i+1, j+1), real=True)
+                Sym = sp.Symbol("U_%s_%i%i"%(label, i+1, j+1), real=True, positive=(i==j))
                 self.S[Sym.name] = Sym
                 U[i,j] = U[j,i] = Sym
         self.U[label] = U
@@ -408,7 +408,7 @@ class unit_cell(object):
             self.AU_formfactors[label] = Sym
         else:
             self.resonant = element
-            Sym = sp.Symbol("f_" + label + "_0", real=True)
+            Sym = sp.Symbol("f_" + label + "_0", real=True, positive=True)
             self.S[Sym.name] = Sym
             self.AU_formfactors[label] = Sym
             f_DD = np.zeros((3,3), dtype=object)
@@ -492,7 +492,7 @@ class unit_cell(object):
                 sett = get_ITA_settings(i)
                 if sg_sym in sett:
                     sg_num = i
-        if sg_num==None:
+        if sg_num is None:
             raise ValueError("space group number could not be determined from .cif file `%s`:"%fname)
         ITA = get_ITA_settings(sg_num)
         if len(ITA)>1:
@@ -518,7 +518,7 @@ class unit_cell(object):
         
         def getcoord(cifline):
             coord, digits = mkfloat(cifline, get_digits=True)
-            if max_denominator==None:
+            if max_denominator is None:
                 return coord
             coordrat = Fraction(coord)
             coordrat = coordrat.limit_denominator(max_denominator)
@@ -529,7 +529,7 @@ class unit_cell(object):
         def getangle(cifline):
             ang, digits = mkfloat(cif[cifline], get_digits=True)
             ang = ang/180
-            if max_denominator==None:
+            if max_denominator is None:
                 return coord
             angrat = Fraction("%.15f"%ang)
             angrat = angrat.limit_denominator(max_denominator)
@@ -862,7 +862,7 @@ class unit_cell(object):
             Takes the three Miller-indices of Type int and calculates the 
             Structure Factor in reciprocal basis.
         """
-        if miller==None:
+        if miller is None:
             miller = self.miller
         self.hkl(*miller)
         if not hasattr(self, "positions"):
@@ -1090,7 +1090,7 @@ class unit_cell(object):
                                        DD=True, DQ=True, simplify=True, subs=True):
         
         self.transform_structure_factor(AAS = (DD+DQ), subs=subs, simplify=simplify)
-        if psi==None:
+        if psi is None:
             self.psi = psi = sp.Symbol("psi", real=True)
             self.S[psi.name] = psi
         
@@ -1348,10 +1348,10 @@ class unit_cell(object):
     def get_absorption_isotropic(self, energy, density=None, table="Sasaki",
                                        fwhm_ev=0.25, f1f2=None):
         self.get_density()
-        if density==None:
+        if density is None:
             density = float(self.density.subs(self.subs).n())
         
-        if f1f2==None:
+        if f1f2 is None:
             f1f2 = self.get_f1f2_isotropic(energy, table=table, fwhm_ev=fwhm_ev)
         
         index_refraction = complex(0)
@@ -1764,7 +1764,7 @@ class unit_cell(object):
             Returns a (theta, psi)-tuple, where theta is the angle between the
             incident beam and the surface and psi is the azimuthal position.
         """
-        if energy==None:
+        if energy is None:
             if self.energy in self.subs:
                 self.subs.pop(self.energy)
         else:
@@ -1817,7 +1817,7 @@ class unit_cell(object):
             that, in turn, returns the (psi, theta) tuple of a given reflection
             and at a given energy.
         """
-        if energy==None:
+        if energy is None:
             if self.energy in self.subs:
                 self.subs.pop(self.energy)
         else:
@@ -1870,8 +1870,9 @@ class unit_cell(object):
         sigma_0 = sp.Matrix([0,0,1]) # perpendicular polarization
         pi_0 = sp.Matrix([sp.cos(theta),  sp.sin(theta), 0]) # parallel polarization incident beam
         pi_h = sp.Matrix([sp.cos(theta), -sp.sin(theta), 0]) # parallel polarization scattered beam
-        
-        k = self.energy / self.eV_A # wavevector
+
+        hc = sp.Symbol("hc", real=True, positive=True)
+        k = self.energy / self.eV_A # wavevector E/hc
         
         vec_k_i = sp.Matrix([-sp.sin(theta), sp.cos(theta), 0]) # direction of incident wavevector
         vec_k_s = sp.Matrix([ sp.sin(theta), sp.cos(theta), 0]) # direction of scattered wavevector
@@ -1898,15 +1899,20 @@ class unit_cell(object):
         
         self.K_g = K_g
         pi_g = K_g.cross(sigma_0)
-        self.pi_g = pi_g = pi_g / sp.sqrt(pi_g[0]**2 + pi_g[1]**2 + pi_g[2]**2) # real norm
-        #self.pi_g = pi_g = pi_g / pi_g.norm()
         sigma_g = pi_g.cross(K_g)
+
+        self.pi_g = pi_g = pi_g / sp.sqrt(pi_g[0]**2 + pi_g[1]**2 + pi_g[2]**2) # real norm
         self.sigma_g = sigma_g = sigma_g / sp.sqrt(sigma_g[0]**2 + sigma_g[1]**2 + sigma_g[2]**2) # real norm
-        #self.sigma_g = sigma_g = sigma_g / sigma_g.norm()
-        
-        # polarization matrizes:
-        One = sp.Symbol("One") # dummy
-        Ones = np.ones_like(energy)
+
+        if self.DEBUG:
+            print map(sp.count_ops, sigma_g), map(sp.count_ops, pi_g)
+        if kwargs["simplify"]:
+            print("Trying to simplify polarization vector expressions...")
+            pi_g.simplify()
+            sigma_g.simplify()
+        if self.DEBUG:
+            print map(sp.count_ops, sigma_g), map(sp.count_ops, pi_g)
+
         # polarization matrizes:
         #alpha_0h_ss = 1
         alpha_0h_pp = pi_0.dot(pi_h)
@@ -1919,8 +1925,9 @@ class unit_cell(object):
         
         alpha_0h2 = alpha_0g*alpha_gh
         
-        ecmplx = sp.Symbol("epsilon_c", complex=True)
-        R_g_f = makefunc(R_g.subs(self.energy, ecmplx), "numpy")
+        #ecmplx = sp.Symbol("epsilon_c", complex=True)
+        #R_g_f = makefunc(R_g.subs(self.energy, ecmplx), "numpy")
+        R_g_f = makefunc(R_g, "numpy")
         
         vectorizer = makeufunc
         alpha_0h_pp_f = vectorizer(alpha_0h_pp)
@@ -1931,8 +1938,20 @@ class unit_cell(object):
         alpha_0h2_fsp = vectorizer((alpha_0h2)[0,1])
         alpha_0h2_fps = vectorizer((alpha_0h2)[1,0])
         alpha_0h2_fpp = vectorizer((alpha_0h2)[1,1])
-        
+
+#        if simplify:
+#            print("Trying to simplify alpha matrices...")
+#            alpha_gh_fs   = alpha_gh_fs.simplify()
+#            alpha_gh_fp   = alpha_gh_fp.simplify()
+#            alpha_0h2_fss = alpha_0h2_fss.simplify()
+#            alpha_0h2_fsp = alpha_0h2_fsp.simplify() # too big
+#            alpha_0h2_fps = alpha_0h2_fps.simplify()
+#            alpha_0h2_fpp = alpha_0h2_fpp.simplify()
+
+
         if self.DEBUG:
+            self.alpha_gh_fs = alpha_gh_fs
+            self.alpha_gh_fp = alpha_gh_fp
             self.alpha_0h2_fss = alpha_0h2_fss
             self.alpha_0h2_fsp = alpha_0h2_fsp
             self.alpha_0h2_fps = alpha_0h2_fps
@@ -1944,11 +1963,13 @@ class unit_cell(object):
             print("chi0 = ",(-Gamma * F_0))
         
         
-        energyc = np.array(energy, dtype=complex)
-        subs = dict(epsilon=energy, epsilon_c=energyc, One=Ones,
-                    h=miller[0], k=miller[1], l=miller[2],
+        #energyc = np.array(energy, dtype=complex)
+        subs = dict(epsilon=energy,
+                    #epsilon_c=energyc,
                     F_0=F_0, psi=psi)
-        
+
+        for i in range(3):
+            subs[self.miller[i]] = miller[i]
         #self._subs = subs
         
         Ns = Np = 1.
@@ -1957,7 +1978,9 @@ class unit_cell(object):
         F_eff = F_eff * np.ones_like(psi) * F_0h
         #print F_eff.shape, F_eff.dtype
         #self.R_h = R_h = 1./R_g_f.dictcall(subs)
-        self.R_h = R_h = 1./(- Gamma*F_0.imag) # lets assume we are in the max. for now. Add detuning later
+        R_h = 1./(- Gamma*F_0.imag) # lets assume we are in the max. for now. Add detuning later
+        _Fcache = dict()
+        _Fmaxcache = dict()
         for g in self.iter_rec_space(qmax, independent=False):
             if g==(0,0,0):
                 continue
@@ -1968,22 +1991,30 @@ class unit_cell(object):
             if hg==(0,0,0):
                 continue
             #F_g  = self.DAFS(energy,  g, force_refresh=False)
-            twomiller = np.array([g, hg])[:,None].transpose(2,0,1)
-            self.f.update(zip(self.miller, twomiller))
-            F_g, F_hg  = self.F_0_func.dictcall(self.f)
-            #print F_g.shape, F_hg.shape, F_g.dtype, F_hg.dtype
-            #F_hg = self.DAFS(energy, hg, force_refresh=False)
-            #self.f.update(zip(self.miller, hg))
-            #F_hg = self.F_0_func.dictcall(self.f)
-            if abs(F_g).max()<1e-6 or abs(F_hg).max()<1e-6:
+            if g not in _Fcache:
+                self.f.update(zip(self.miller, g))
+                F_g  = self.F_0_func.dictcall(self.f)
+                for _R in self.get_equivalent_vectors(g):
+                    _Fcache[_R] = F_g
+                    _Fmaxcache[_R] = abs(F_g).max()
+            if hg not in _Fcache:
+                self.f.update(zip(self.miller, hg))
+                F_hg  = self.F_0_func.dictcall(self.f)
+                for _R in self.get_equivalent_vectors(hg):
+                    _Fcache[_R] = F_hg
+                    _Fmaxcache[_R] = abs(F_hg).max()
+
+            if _Fmaxcache[g]<1e-6 or _Fmaxcache[hg]<1e-6:
                 if verbose:
                     print "skipped"
                 continue
             elif verbose:
                 print ""
-            R_g = 1./R_g_f.dictcall(subs)
-            #print R_g.max(), R_g.min()
-            F12 = Gamma * R_g * F_g * F_hg
+
+            F_g  = _Fcache[g]
+            F_hg  = _Fcache[hg]
+
+
             if self.DEBUG:
                 smth = np.array([
                                  alpha_0h2_fss.dictcall(subs),
@@ -1995,19 +2026,23 @@ class unit_cell(object):
                 for i in range(4):
                     print("%i NaN values in alpha_%i"%(np.isnan(smth[i]).sum(), i))
                 self._subs = subs
-                
+
+            R_g = 1./R_g_f.dictcall(subs)
+            #print R_g.max(), R_g.min()
+            F12 = Gamma * R_g * F_g * F_hg
+
             F_eff[0] += alpha_0h2_fss.dictcall(subs) * F12
             F_eff[1] += alpha_0h2_fsp.dictcall(subs) * F12
             F_eff[2] += alpha_0h2_fps.dictcall(subs) * F12
             F_eff[3] += alpha_0h2_fpp.dictcall(subs) * F12
-                
+
             #print alpha_0h2_fss.dictcall(subs).shape,alpha_0h2_fss.dictcall(subs).dtype,F12.shape,F_eff.shape,F_eff.dtype
-            
-            
+
+
             fac = (Gamma*F_hg)**2 * R_g * R_h
             Ns -= alpha_gh_fs.dictcall(subs) * fac
             Np -= alpha_gh_fp.dictcall(subs) * fac
-        
+
         self.F_eff = F_eff
         self.Ns = Ns
         self.Np = Np
@@ -2015,7 +2050,7 @@ class unit_cell(object):
         F_eff.resize((2,2) + F_eff.shape[1:])
         F_eff[:,0] /= Ns
         F_eff[:,1] /= Np
-        
+
         return F_eff
 
 
