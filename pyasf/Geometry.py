@@ -362,6 +362,8 @@ class SchwarzenbachFlack(object):
         self.e = sp.Matrix((1,0,0))
         self.f = sp.Matrix((0,1,0))
         self.g = sp.Matrix((0,0,1))
+        self.efg = sp.Matrix((self.e.T, self.f.T, self.g.T)) # 3by3 matrix
+        self.efg_Tinv = self.efg.T.inv()
 
     def set_geometry(self, miller, surface, psi, energy,
                            verbose=True, subs=True):
@@ -371,7 +373,12 @@ class SchwarzenbachFlack(object):
 
         output = VerboseDict() if verbose else dict()
         structure = self.structure
-        structure.calc_structure_factor(miller, DD=False, DQ=False)
+        #structure.calc_structure_factor(miller,
+        #                                DD=False,
+        #                                DQ=False,
+        #                                Temp=False, # 0K
+        #                                subs=subs,
+        #                                evaluate=False)
 
         h, k, l = miller
 
@@ -386,7 +393,9 @@ class SchwarzenbachFlack(object):
             u = sp.Matrix((k-l, l-h, h-k))
         output["u"] = u
 
-        thBragg = structure.theta_degrees(energy, rad=True)
+        structure.hkl(h,k,l)
+        thBragg = sp.asin(structure.eV_A/(2*energy/structure.q.subs(structure.subs)))
+        #thBragg = structure.theta_degrees(energy, rad=True)
         output["thBragg"] = thBragg
 
         p = -sp.sin(thBragg)*self.f - sp.cos(thBragg)*self.e
@@ -394,38 +403,38 @@ class SchwarzenbachFlack(object):
         output["p"] = p
         output["d"] = d
 
-        efg = sp.Matrix((self.e.T, self.f.T, self.g.T)) # 3by3 matrix
-        output["efg"] = efg
 
         Psi = sp.Matrix((sp.sin(psi), 0, sp.cos(psi)))
         output["Psi"] = Psi
 
-        q_x, q_y, q_z = sp.symbols("q_x q_y q_z", real=True) # unknowns for now
-        qsym = sp.Matrix((q_x, q_y,q_z))
-
-        result = sp.solve(Psi - efg.T * qsym) # find q
-        q = qsym.subs(result)
+        q = self.efg_Tinv*Psi
         output["q"] = q
+        output["efg"] = self.efg
 
         B = structure.Minv.T # first part of UB Matrix
         M = structure.M # first part of UB Matrix
         if subs:
             M = M.subs(structure.subs).n()
             B = B.subs(structure.subs).n()
-        output["M"] = B
+        output["M"] = M
         output["B"] = B
 
         f_c = B * sp.Matrix(miller) # f in crystal-fixed cartesian system (f is reciprocal lattice)
         u_c = M * u # u in crystal-fixed cartesian system (u is direct lattice)
         f_c = f_c.normalized()
         u_c = u_c.normalized()
+        u_c.simplify()
         output["f_c"] = f_c
         output["u_c"] = u_c
 
 
-
         U1 = pyasf.rotation_from_vectors(self.f, f_c)
+        #U1.simplify()
         U2 = pyasf.rotation_from_vectors(q, U1*u_c)
+
+        #output["U1"] = U1
+        #output["U2"] = U2
+        #return output
 
         U = U2*U1
         UB = U*B
@@ -435,6 +444,7 @@ class SchwarzenbachFlack(object):
 
         output["U"] = U
         output["UB"] = UB
+        #return output
 
 
         surface_d = UB * sp.Matrix(surface) # in SF coordinates
