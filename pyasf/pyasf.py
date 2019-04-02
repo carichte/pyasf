@@ -802,7 +802,27 @@ class unit_cell(object):
         self._labels = np.array(self._labels)
         self.numato = sum(self.multiplicity.values())
         self.mindist = 1./self.numato**(1./3)/1000.
-    
+
+
+
+
+    def transform_unit_cell_positions(self, generator):
+        """
+            Generates all Atoms of the Unit Cell.
+        """
+        self.multiplicity = collections.defaultdict(int)
+
+        _positions = []
+        _labels = []
+        for label, position in zip(self._labels, self._positions):
+            W = sp.Matrix(generator[:,:3])
+            w = generator[:,3].ravel()
+            new_position = W.dot(position) + w
+            new_position = np.array([stay_in_UC(i) for i in new_position])
+            _positions.append(new_position)
+            _labels.append(label)
+        return _labels, _positions
+
     
 
 
