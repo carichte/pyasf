@@ -804,6 +804,8 @@ class unit_cell(object):
         self.mindist = 1./self.numato**(1./3)/1000.
     
     
+
+
     def get_nearest_neighbors(self, label, num=1):
         num = int(num)
         if not num > 0:
@@ -2199,7 +2201,7 @@ class unit_cell(object):
 
     
     def XRD_pattern(self, x, energy, xaxis="theta", qmax=None, width=0.01, grainsize=44.,
-                           Lfac = True, Pfac = True, verbose=False):
+                           Lfac = True, Pfac = True, poling=None, verbose=False):
         """
             Calculates the diffraction intensity for all reflections in 
             a certain range for theta - the Bragg angle.
@@ -2223,6 +2225,8 @@ class unit_cell(object):
                 grainsize : float
                     average grain size of the powder in microns for
                     additional broadening according to Scherrer equation
+                poling : 3d array
+                    vector indication preferred orientation
             
             Outputs:
                 Intensity : numpy.ndarray((n,), float)
@@ -2275,6 +2279,10 @@ class unit_cell(object):
             F = F.reshape(energy.shape)
             M = len(self.get_equivalent_vectors(R))
             I = np.float_(abs(F)**2 * M) * LP(th_arr, False)
+            if poling is not None:
+                v = np.array(list(self.get_equivalent_vectors(R)), dtype=float).T
+                fac = np.dot(poling, v)/np.linalg.norm(v, axis=0)/np.linalg.norm(poling)
+                I *= (1+fac).mean()/2.
             width2 = (0.9 * 12398.4 / ( 2 * energy * grainsize * np.cos(theta)))**2
             w = width + width2 # broadening
             w = np.sqrt(w) # /2.3548
