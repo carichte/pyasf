@@ -1,5 +1,10 @@
 import os
+import sys
+import itertools
+import string
 import sympy as sp
+import numpy as np
+import types
 
 try:
     import mpmath
@@ -9,12 +14,15 @@ except:
 
 from sympy.utilities.autowrap import ufuncify
 from sympy.utilities import lambdify
-import types
-import urllib
-import cPickle as pickle
-import numpy as np
-import itertools
-import string
+
+if sys.version_info[0]<3:
+    import cPickle as pickle
+    from urllib import urlopen, urlencode
+else:
+    import pickle
+    from urllib.request import urlopen
+    from urllib.parse import urlencode
+
 
 DBPATH = os.path.join(os.path.dirname(__file__), "space-groups.sqlite")
 SETTPATH = os.path.join(os.path.dirname(__file__), "settings.txt")
@@ -24,13 +32,16 @@ def get_ITA_settings(sgnum):
     if os.path.isfile(SETTPATH):
         settings = np.genfromtxt(SETTPATH, dtype="i2,O,O")
         ind = settings["f0"]==sgnum
-        return dict(zip(settings["f1"][ind], settings["f2"][ind]))
+        #print(settings["f1"][ind])
+        return dict(zip(map(bytes.decode, settings["f1"][ind]), 
+                        map(bytes.decode, settings["f2"][ind])
+                       ))
     else:
         from lxml import etree
         print("Fetching ITA settings for space group %i"%sgnum)
         baseurl = "http://www.cryst.ehu.es/cgi-bin/cryst/programs/nph-getgen"
-        params = urllib.urlencode({'gnum': sgnum, 'what':'gp', 'settings':'ITA Settings'})
-        result = urllib.urlopen(baseurl, params)
+        params = urlencode({'gnum': sgnum, 'what':'gp', 'settings':'ITA Settings'}).encode()
+        result = urlopen(baseurl, params)
         result = result.read()
         parser = etree.HTMLParser()
         tree = etree.fromstring(result, parser, base_url = baseurl)
@@ -57,7 +68,7 @@ def get_ITA_settings(sgnum):
                 #url = a.attrib["href"]
                 #url = urllib.quote(url, safe="%/:=&?~#+!$,;'@()*[]")
                 #settings[setting] = urllib.basejoin(baseurl, url)
-                settings[setting] = trmat
+                settings[setting.decode()] = trmat.decode()
     return settings
 
 
@@ -72,9 +83,8 @@ def fetch_ITA_generators(sgnum, trmat=None):
     params = {'gnum': sgnum, 'what':'gp'}
     if trmat!=None:
         params["trmat"] = trmat
-    params = urllib.urlencode(params)
-    #print params
-    result = urllib.urlopen(url, params)
+    params = urlencode(params).encode()
+    result = urlopen(url, params)
     result = result.read()
     from lxml import etree
     parser = etree.HTMLParser()
@@ -91,7 +101,7 @@ def fetch_ITA_generators(sgnum, trmat=None):
         if not isinstance(tr[0].text, str) or not tr[0].text.isdigit():
             continue
         pre = tr[4][0][0][1][0].text
-        generator = map(sp.S, pre.split())
+        generator = list(map(sp.S, pre.split()))
         generators.append(sp.Matrix(generator).reshape(3,4))
     return generators
     
@@ -133,9 +143,10 @@ def get_generators(sgnum=0, sgsym=None):
         if sgnum < 1 or sgnum > 230:
             raise ValueError("Space group number must be in range of 1...230")
         settings = get_ITA_settings(sgnum)
+        #print(settings)
         setnames = " ".join(settings.keys())
         if len(settings)==1:
-            sgsym = settings.keys()[0]
+            sgsym = list(settings.keys())[0]
         elif sgsym!=None:
             if sgsym not in settings:
                 raise ValueError(
@@ -145,7 +156,7 @@ def get_generators(sgnum=0, sgsym=None):
         else:
             print("Warning: Space Group #%i is ambigous:%s"\
                   "  Possible settings: %s "%(sgnum, os.linesep, setnames))
-            settings_inv = dict([(v,k) for (k,v) in settings.iteritems()])
+            settings_inv = dict([(v,k) for (k,v) in settings.items()])
             sgsym = settings_inv["a,b,c"]
             print("  Using standard setting: %s"%sgsym)
         trmat = settings[sgsym]
@@ -168,19 +179,20 @@ def get_generators(sgnum=0, sgsym=None):
             cur.execute("DELETE FROM spacegroups WHERE sg_symbol = '%s'"%sgsym)
             dbi.commit()
             dbi.close()
-            print "Deleted old dataset."
+            print("Deleted old dataset.")
     print("Space Group %s not yet in database. "\
           "Fetching from internet..."%sgsym)
-    print sgnum, trmat
+    print((sgnum, trmat))
     generators = fetch_ITA_generators(sgnum, trmat)
-    gendump = base64.b64encode(pickle.dumps(generators))
+    gendump = base64.b64encode(pickle.dumps(generators)).decode()
     dbi=sqlite3.connect(DBPATH)
     cur=dbi.cursor()
-    cur.execute("INSERT INTO spacegroups "\
-                  "(sg_symbol, sg_number, generators, trmat) "\
-                "VALUES "\
-                  "('%s', '%i', '%s', '%s')"\
-                 % (sgsym, sgnum, gendump, trmat))
+    sql = ("INSERT INTO spacegroups "
+           "(sg_symbol, sg_number, generators, trmat) "
+           "VALUES ('%s', '%i', '%s', '%s')"
+           ) % (sgsym, sgnum, gendump, trmat)
+    print(sql)
+    cur.execute(sql)
     dbi.commit()
     dbi.close()
     return generators
@@ -250,7 +262,7 @@ def full_transform_old(Matrix, Tensor):
         Transforms the Tensor to Representation in new Basis with given Transformation Matrix.
     """
     import numpy
-    for i in xrange(Tensor.ndim):
+    for i in range(Tensor.ndim):
         Axes = range(Tensor.ndim)
         Axes[0] = i
         Axes[i] = 0
@@ -261,7 +273,7 @@ def full_transform2(Matrix, Tensor):
     """
         Transforms the Tensor to Representation in new Basis with given Transformation Matrix.
     """
-    for i in xrange(Tensor.ndim):
+    for i in range(Tensor.ndim):
         Tensor = np.tensordot(Tensor, Matrix, axes=(0,0))
     return Tensor
 
@@ -342,7 +354,7 @@ def get_cell_parameters(sg, sgsym = None):
         else: 
             raise ValueError(
                 "Invalid Space Group Number. Has to be in range(1,231).")
-        print system
+        print(system)
         return a, b, c, alpha, beta, gamma, system
 
 def get_rec_cell_parameters(a, b, c, alpha, beta, gamma):

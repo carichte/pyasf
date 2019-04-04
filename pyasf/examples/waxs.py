@@ -15,7 +15,7 @@ import pylab as pl
 
 
 #cs = pyasf.unit_cell("9006864")
-from materials import STO
+from pyasf.materials import STO
 
 cs = STO.get_cs()
 theta = pl.linspace(5,80,10001)

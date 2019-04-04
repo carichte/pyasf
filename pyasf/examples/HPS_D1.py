@@ -45,8 +45,8 @@ if __name__ == "__main__":
         llist.append(l)
         thlist.append(thistheta)
         Ilist.append(Intens)
-        print miller, thistheta
-    
+        print((miller, thistheta))
+
     harray = np.array(hlist, dtype=int)
     karray = np.array(klist, dtype=int)
     larray = np.array(llist, dtype=int)

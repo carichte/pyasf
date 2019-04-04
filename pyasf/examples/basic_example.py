@@ -38,7 +38,7 @@ cs.AU_formfactorsDD["Nb1"] # representation of dipole dipole form factor tensor 
 # <codecell>
 
 vector = sp.Matrix([1,1,1]) # create random vector
-print cs.M * vector # the same vector in cartesian system defined as in Trueblood: doi:10.1107/S0108767396005697
+print(cs.M * vector) # the same vector in cartesian system defined as in Trueblood: doi:10.1107/S0108767396005697
 
 # <codecell>
 
@@ -47,7 +47,7 @@ F0 = cs.calc_structure_factor((0,0,3), Temp=False) # calculate structure factor 
 
 # <codecell>
 
-print F0.n().simplify() # evaluate structure factor ==> forbidden reflection
+print(F0.n().simplify()) # evaluate structure factor ==> forbidden reflection
 
 # <codecell>
 
@@ -56,11 +56,11 @@ cs.calc_scattered_amplitude() # calculate Structure Factor for higher orders ten
 
 # <codecell>
 
-print cs.E["ss"] # also zero for sigma sigma scattering
+print(cs.E["ss"]) # also zero for sigma sigma scattering
 
 # <codecell>
 
-print cs.E["sp"] # some dipole quadrupole scattering in sigma pi scattering channel
+print(cs.E["sp"]) # some dipole quadrupole scattering in sigma pi scattering channel
 
 # <codecell>
 
@@ -68,7 +68,7 @@ Fhot = cs.calc_structure_factor((0,0,3), Temp=True) # calculate structure factor
 
 # <codecell>
 
-print Fhot.n().simplify() # also no temperature scattering
+print(Fhot.n().simplify()) # also no temperature scattering
 
 # <codecell>
 
@@ -141,7 +141,7 @@ gen = cs.iter_rec_space(0.3) # iterator for all reflections in a ewald volume 2*
 
 # <codecell>
 
-print list(gen)
+print(list(gen))
 
 # <codecell>
 

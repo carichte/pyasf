@@ -1,9 +1,9 @@
 import os
 import collections
-import pyasf
+import itertools
 import numpy as np
 import sympy as sp
-import itertools
+import pyasf
         
 
 class ThreeCircleVertical(object):
@@ -129,13 +129,13 @@ class ThreeCircleVertical(object):
                            Uaniso=bool(len(self.structure.Uaniso)),
                            simplify=False)
         
-        SF_defaults.update([kw for kw in kwargs.iteritems() if kw[0] in SF_defaults])
+        SF_defaults.update([kw for kw in kwargs.items() if kw[0] in SF_defaults])
         
         DAFS_kw = ("DD", "DQ", "Temp", "fwhm_ev", "table", "simplify", "subs", "Uaniso")
-        DAFS_kw = dict([(k,v) for k in kwargs.iteritems() if k in DAFS_kw])
+        DAFS_kw = dict([(k,v) for k in kwargs.items() if k in DAFS_kw])
         
         if verbose:
-            print SF_defaults
+            print(SF_defaults)
             #print("Calculating all structure factors...")
         
         energy = np.array(energy, dtype=float, ndmin=1)
@@ -168,10 +168,10 @@ class ThreeCircleVertical(object):
         RMi.simplify()
         
         if verbose:
-            print os.linesep,"rec. lattice to cartesian coordinates:"
+            print("rec. lattice to cartesian coordinates:")
             sp.pprint(M.inv().T.n(3))
         if verbose:
-            print os.linesep,"cartesian to diffractometer coordinates:"
+            print("cartesian to diffractometer coordinates:")
             sp.pprint(R.n(3))
         
         structure.calc_structure_factor(**SF_defaults)
@@ -184,7 +184,7 @@ class ThreeCircleVertical(object):
         vec_k_i = sp.Matrix([sp.cos(alpha), 0, -sp.sin(alpha)])
         vec_k_i_ = np.array(vec_k_i)
         if verbose:
-            print os.linesep,"incident X-ray wavevector:"
+            print("incident X-ray wavevector:")
             sp.pprint(vec_k_i.n(4))
         
         # unit wave vector for reflection h (K(h_m)), symbolic:
@@ -270,7 +270,7 @@ class ThreeCircleVertical(object):
                     
 
 
-        indices = [np.arange(Hmin[i], Hmax[i]+1) for i in xrange(3)]
+        indices = [np.arange(Hmin[i], Hmax[i]+1) for i in range(3)]
         riter = itertools.product(*map(tuple,indices))
         im = np.zeros((len(energy),)+kval.shape[1:])
         Gamma_ = Gamma_.dictcall(subs)
@@ -297,12 +297,12 @@ class ThreeCircleVertical(object):
                * np.exp(- angh/(2*var[0]) \
                         - angv/(2*var[1]))/np.sqrt((var[0]*var[1]))/1000**2
             if verbose:
-                print H,
+                print(H, end="")
                 if I.max()>1e-10:
                     imax = I.argmax()
                     print("Excitation error: %g"%(1./abs(R_h).max())),
                     print("Peak intensity: %g"%I.max()),
-                    print("h,k,l: %.3f %.3f %.3f"%tuple(Qval[i].ravel()[imax] for i in xrange(3))),
+                    print("h,k,l: %.3f %.3f %.3f"%tuple(Qval[i].ravel()[imax] for i in range(3))),
                 print("")
 
             im += I # uniform sum over energies

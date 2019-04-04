@@ -58,8 +58,8 @@ class AreaDetector(object):
     
     def get_pixels(self):
         rows, cols = self.pixelNum
-        rows = np.arange(-rows/2, rows/2)
-        cols = np.arange(-cols/2, cols/2)
+        rows = np.arange(-rows//2, rows//2)
+        cols = np.arange(-cols//2, cols//2)
         cols, rows = np.meshgrid(cols, rows)
         return rows, cols
     
@@ -85,7 +85,7 @@ class AreaDetector(object):
             return self.projection
         kprime = self.kprime if hasattr(self, "kprime") else self.get_kprime()
         
-        kcen = kprime[:, self.pixelNum[0]/2, self.pixelNum[1]/2]
+        kcen = kprime[:, self.pixelNum[0]//2, self.pixelNum[1]//2]
         projection = np.tensordot(kprime, kcen, axes=(0,0))
         return projection
         

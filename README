@@ -13,8 +13,7 @@ Requirements:
     - Python Packages:
         - numpy
         - sympy
-        - sqlite3
-        - pickle
+	- PyCifRW
     - the package rexs (https://github.com/carichte/rexs)
         is recommended and necessary for DAFS evaluation
 

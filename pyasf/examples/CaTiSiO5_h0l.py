@@ -41,7 +41,7 @@ for miller in cs.iter_rec_space(2.5, False):
     
     F = cs.DAFS(energy, miller, force_refresh=False)
     I = abs(F)**2
-    print miller, I
+    print(miller, I)
     
     w = pl.sqrt(I/I0/10.)
     amp = pl.sqrt(I/I0)

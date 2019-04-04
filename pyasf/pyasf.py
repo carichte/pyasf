@@ -6,25 +6,31 @@
     Written by Carsten Richter (carsten.richter@desy.de)
     http://www.desy.de/~crichter
 """
-
 import itertools
 import copy
+import six
 import sympy as sp
 import numpy as np
 import difflib
 import collections
-import urllib2
 import CifFile
+
+if six.PY2:
+    from StringIO import StringIO
+    from urllib2 import urlopen
+    ifilter = itertools.ifilter
+else:
+    from io import StringIO
+    from urllib.request import urlopen
+    ifilter = filter
 from time import time
 from fractions import Fraction
 from scipy.interpolate import interp1d
 from scipy import ndimage
 from sympy.utilities import lambdify
-import elements
-import StringIO
-
-from functions import *
-import FormFactors
+from . import elements
+from .functions import *
+from . import FormFactors
 #mydict = dict({"Abs":abs})
 #epsilon=1.e-10
 
@@ -77,7 +83,7 @@ class _named2darray(np.ndarray):
         if len(fields) != self.shape[1]:
             raise ValueError("shape mismatch: number of columns and length of "
                              "fields must agree")
-        if not all(map(lambda s: isinstance(s, str), fields)):
+        if not all(map(lambda s: isinstance(s, six.string_types), fields)):
             raise ValueError("Fields must be sequence of type str")
         
         self._fields = fields
@@ -116,7 +122,7 @@ class SymbolDict(dict):
     """
     def __getitem__(self, sym):
         #if not self.has_key(sym) and isinstance(sym, str):
-        if not sym in self and isinstance(sym, str):
+        if not sym in self and isinstance(sym, six.string_types):
             syms = self.keys()
             syms_str = [S.name for S in syms if isinstance(S, sp.Symbol)]
             num = syms_str.count(sym)
@@ -125,7 +131,7 @@ class SymbolDict(dict):
             elif num > 1:
                 raise KeyError("Multiple symbols found for name: `%s`"%sym)
             else:
-                sym = syms[syms_str.index(sym)]
+                sym = list(syms[syms_str.index(sym)])
         return super(SymbolDict, self).__getitem__(sym)
 
 
@@ -134,9 +140,9 @@ def mkfloat(string, get_digits=False):
     """
         Simple parser for numeric values in .cif files
     """
-    if isinstance(string, (float, int, long)):
-        return string
-    assert isinstance(string, str), "Invalid input. Need str."
+    if isinstance(string, (six.integer_types, float)):
+        return float(string)
+    assert isinstance(string, six.string_types), "Invalid input. Need str."
     string = string.strip()
     string = string.replace(",", ".")
     i = string.find("(")
@@ -287,10 +293,10 @@ class unit_cell(object):
             else:
                 print("Looking up Crystallography Open Database for entry %i..."%structure)
                 codurl = "http://www.crystallography.net/cod/%i.cif"%structure
-                handle = urllib2.urlopen(codurl)
+                handle = urlopen(codurl)
                 text = handle.read()
                 handle.close()
-                ciffile = StringIO.StringIO(text)
+                ciffile = StringIO(text.decode())
                 self.load_cif(ciffile, resonant, **kwargs)
 
         elif len(structure)==2 and str(structure[0]).isdigit():
@@ -305,7 +311,7 @@ class unit_cell(object):
 
     def _init_lattice(self, sg_num):
         self.sg_num = sg_num
-        self.generators = map(np.array, get_generators(self.sg_num, self.sg_sym)) # fetch the space group generators
+        self.generators = get_generators(self.sg_num, self.sg_sym) # fetch the space group generators
         if self.sg_sym!=None:
             self.transform = transform = get_ITA_settings(self.sg_num)[self.sg_sym]
         metrik = get_cell_parameters(self.sg_num, self.sg_sym)
@@ -359,11 +365,11 @@ class unit_cell(object):
                     atom.
         """
         
-        if not isinstance(label, str): raise TypeError("Invalid label. Need string.")
+        if not isinstance(label, six.string_types): raise TypeError("Invalid label. Need string.")
         if len(position) is not 3: raise TypeError("Enter 3D position object!")
         position = list(position)
         for i in range(3):
-            if isinstance(position[i], str):
+            if isinstance(position[i], six.string_types):
                 position[i] = sp.S(Fraction(position[i]).limit_denominator(1000))
         #label = label.replace("_", "")
         labeltest = label[0].upper()
@@ -377,14 +383,14 @@ class unit_cell(object):
             raise ValueError("Atom label should start with the symbol of the chemical element" + \
                              "Chemical element not found in %s"%label)
         self.elements[label] = element
-        self.AU_positions[label] = np.array(position)
+        self.AU_positions[label] = sp.Matrix(position)
         self.dE[label] = dE
         if charge!=None:
             self.charges[label] = int(charge)
         
         self.occupancy[label] = occupancy
         
-        ind = xrange(3)
+        ind = range(3)
         U = sp.zeros(3,3)
         for i,j in itertools.product(ind, ind):
             if i<=j: 
@@ -506,7 +512,7 @@ class unit_cell(object):
                 if sg_sym[-1] in ["R", "H"] and ":" not in sg_sym:
                     sg_sym = sg_sym[:-1] + ":" + sg_sym[-1]
                     
-                settings = ITA.keys()
+                settings = list(ITA.keys())
                 sg_sym = sg_sym.lower()
                 ratios = [difflib.SequenceMatcher(a=sg_sym, b=set.lower()).ratio() for set in settings]
                 setting = settings[np.argmax(ratios)]
@@ -569,7 +575,7 @@ class unit_cell(object):
             py = sp.S(getcoord(line._atom_site_fract_y))
             pz = sp.S(getcoord(line._atom_site_fract_z))
             occ = mkfloat(line._atom_site_occupancy) if loop.has_key("_atom_site_occupancy") else 1
-            position = map(stay_in_UC, (px, py, pz))
+            position = [stay_in_UC(p) for p in (px, py, pz)]
             isotropic = (symbol not in resonant)
             if loop.has_key("_atom_site_u_iso_or_equiv"):
                 iso = mkfloat(line._atom_site_u_iso_or_equiv)
@@ -612,7 +618,7 @@ class unit_cell(object):
             Applies Site Symmetries of the Space Group to the Scattering Tensors.
         """
         if labels == None:
-            labels = self.U.iterkeys()
+            labels = self.U.keys()
         self._equations = {}
         self._symmetries = {}
         self._Usymmetries = {}
@@ -621,27 +627,28 @@ class unit_cell(object):
         M_r = M_r * M_r.T
         for label in labels:
             if self.DEBUG:
-                print label
+                print(label)
             equations = set()
             Uequations = set()
             U = self.U[label]
             Beta = U.multiply_elementwise(M_r)
             #Beta = full_transform(self.metric_tensor, Beta) # transform to direct lattice
-            position = self.AU_positions[label]
+            site = self.AU_positions[label]
             for ii, generator in enumerate(self.generators):
-                W = sp.Matrix(generator[:,:3])
-                w = generator[:,3].ravel()
+                W = generator[:,:3]
+                w = generator[:,3]
                 #if self.DEBUG: print w, W
-                new_position = W.dot(position) + w
-                new_position = np.array([stay_in_UC(i) for i in new_position])
-                dist = ((new_position - position)**2).sum()
+                new_position = W * site + w
+                new_position = new_position.applyfunc(stay_in_UC)
+                diff = (new_position - site)
+                dist = diff.dot(diff)
                 if self.DEBUG: 
                     print("Generator #%i"%ii)
-                    print dist, new_position - position
+                    print((dist, diff))
                 #if (new_position == self.AU_positions[label]).all(): #1.8.13
                 if not sp.Expr.has(dist, sp.Symbol) and dist < self.eps:
                     if self.DEBUG:
-                        print generator
+                        print(generator)
                     # International Tables for Crystallography (2006). Vol. D, ch. 1.1, pp. 3-33
                     # incident polarization is contravariant => f is 2 times covariant
                     # -> first axis in DD
@@ -687,12 +694,12 @@ class unit_cell(object):
                 ffSym = set()
                 ffSym.update(np.ravel(self.AU_formfactorsDDc.get(label, 0)))
                 ffSym.update(np.ravel(self.AU_formfactorsDQc.get(label, 0)))
-                ffSym = filter(lambda s: s.is_Symbol, ffSym)
+                ffSym = [s for s in ffSym if s.is_Symbol]
                 #ffSym = [Sym S in self.S.iteritems() if k.startswith("f_")]
                 symmetries =  sp.solve( equations, ffSym, dict=True, manual=True)
                 self._symmetries[label] = symmetries = symmetries[0]
                 if self.DEBUG:
-                    print symmetries
+                    print(symmetries)
                 applymethod(self.AU_formfactorsDD[label], "subs", symmetries)
                 applymethod(self.AU_formfactorsDD[label], "simplify")
                 applymethod(self.AU_formfactorsDQ[label], "subs", symmetries)
@@ -710,7 +717,7 @@ class unit_cell(object):
             
             if self.DEBUG:
                 if label in self.AU_formfactorsDD:
-                    print self.AU_formfactorsDD[label]
+                    print(self.AU_formfactorsDD[label])
                 if label in self.AU_formfactorsDQ:
                     self.AU_formfactorsDQ[label]
     
@@ -765,21 +772,24 @@ class unit_cell(object):
         M_r = M_r * M_r.T
         self._positions = []
         self._labels = []
-        for label, position in self.AU_positions.iteritems():
+        for label, site in self.AU_positions.items():
             U = self.U[label]
             Beta = 2 * sp.pi**2 * U.multiply_elementwise(M_r)
             for generator in self.generators:
-                W = sp.Matrix(generator[:,:3])
-                w = generator[:,3].ravel()
+                W = generator[:,:3]
+                w = generator[:,3]
                 #print W, self.AU_positions[label], w
-                new_position = W.dot(position) + w
-                new_position = np.array([stay_in_UC(i) for i in new_position])
-                if len(self.positions[label])>0: 
-                    ind = ((new_position - np.array(self.positions[label]))**2).sum(1)
-                else:
-                    ind = np.array((1,))
-                ind = np.array([d for d in ind if np.isscalar(d) or not hassymb(d)])
-                if not (ind < self.eps).any():
+                new_position = W * site + w
+                new_position = new_position.applyfunc(stay_in_UC)
+                dist = []
+
+                for position in self.positions[label]:
+                    diff = new_position - position
+                    dist.append(diff.dot(diff))
+
+                dist = [d for d in dist if np.isscalar(d) or not hassymb(d)]
+
+                if not dist or not min(dist) < self.eps:
                     #if new_position not in self.positions[label]:
                     self.Beta[label].append(sp.Matrix(full_transform(W.T, Beta)))
                     #self.Beta[label].append(sp.Matrix(full_transform(W.inv().T, Beta)))
@@ -794,7 +804,7 @@ class unit_cell(object):
                     self.positions[label].append(new_position)
                     #sp.pprint(self.Beta[label][-1])
                     #sp.pprint(new_position)
-                    self._positions.append(new_position)
+                    self._positions.append(new_position.T)
                     self._labels.append(label)
                     self.multiplicity[label] += 1
         # rough estimate of the infimum of the distance of atoms:
@@ -815,11 +825,11 @@ class unit_cell(object):
         _positions = []
         _labels = []
         for label, position in zip(self._labels, self._positions):
-            W = sp.Matrix(generator[:,:3])
-            w = generator[:,3].ravel()
-            new_position = W.dot(position) + w
-            new_position = np.array([stay_in_UC(i) for i in new_position])
-            _positions.append(new_position)
+            W = generator[:,:3]
+            w = generator[:,3]
+            new_position = W * position + w
+            new_position = new_position.applyfunc(stay_in_UC)
+            _positions.append(np.ravel(new_position))
             _labels.append(label)
         return _labels, _positions
 
@@ -831,7 +841,7 @@ class unit_cell(object):
         if not num > 0:
             return
         
-        pos = self.AU_positions[label].astype(float)
+        pos = np.array(self.AU_positions[label], dtype=float).ravel()
         diff = (pos - self._positions.astype(float))%1
         diff = np.vstack([diff, diff-np.array((0,0,1))])
         diff = np.vstack([diff, diff-np.array((0,1,0))])
@@ -854,14 +864,14 @@ class unit_cell(object):
         import rexs.xray.interactions as xi
         assert hasattr(self, "positions"), \
             "Unable to find atom positions. Did you forget to perform the unit_cell.build_unit_cell() method?"
-        self.species = np.unique(self.elements.values())
+        self.species = np.unique(list(self.elements.values()))
         self.stoichiometry = collections.defaultdict(float)
         for label in self.elements:
             self.stoichiometry[self.elements[label]] += self.multiplicity[label] * self.occupancy[label]
         
         self.weights = dict([(atom, xi.get_element(atom)[1]) for atom in self.species])
         div = min(self.stoichiometry.values())
-        components = ["%s%.2g"%(item[0], item[1]/div) for item in self.stoichiometry.iteritems()]
+        components = ["%s%.2g"%(item[0], item[1]/div) for item in self.stoichiometry.items()]
         components = map(lambda x: x[:-1] if (x[-1]=="1" and not x[-2].isdigit()) else x, components)
         self.SumFormula = "".join(components)
         
@@ -917,26 +927,27 @@ class unit_cell(object):
                         Beta = self.Beta[label][i]
                         if subs:
                             Beta = Beta.subs(self.subs)
-                        DW = sp.exp(-G.dot(Beta.dot(G))*Temp)
+                        DW = sp.exp(-G.dot(Beta*G)*Temp)
                     else:
                         DW = sp.exp(-2 * sp.pi**2 * self.q**2 * Uval * Temp).subs(self.subs)
                 else:
                     DW = 1
-                
+
+                phase = sp.exp(2*sp.pi*sp.I * G.dot(r))
+                if self.DEBUG: print((r, G.dot(r)))
                 if label in self.formfactors:
                     f = self.formfactors[label][i]
-                    if self.DEBUG: print r, G.dot(r)
-                    self.F_0 += o * f * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
+                    self.F_0 += o * f * phase * DW
                 if DD and label in self.formfactorsDD:
                     f = self.formfactorsDD[label][i]
-                    self.F_DD += o * f * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
+                    self.F_DD += o * f * phase * DW
                 if DQ and label in self.formfactorsDQ:
                     f_in = self.formfactorsDQ[label][i]
                     f_sc = - f_in.copy().transpose(0,2,1)
                     #applymethod(f_sc, "conjugate") # only real parameters as in FDMNES!!!!?
-                    #self.F_DQ += o * (f_in - f_out) * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
-                    self.F_DQin += o * f_in * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
-                    self.F_DQsc += o * f_sc * sp.exp(2*sp.pi*sp.I * G.dot(r)) * DW
+                    #self.F_DQ += o * (f_in - f_out) * phase * DW
+                    self.F_DQin += o * f_in * phase * DW
+                    self.F_DQsc += o * f_sc * phase * DW
         
         self.q = self.qfunc.dictcall(self.subs)
         self.d = 1/self.q
@@ -980,7 +991,7 @@ class unit_cell(object):
         elif kw:
             miller = map(lambda S: S.name, self.miller)
             miller = dict(zip(miller, self.miller))
-            subs = [(miller[k], v) for k,v in kw.iteritems() if k in miller]
+            subs = [(miller[k], v) for k,v in kw.items() if k in miller]
             self.subs.update(subs)
         else:
             return tuple(self.subs[ind] for ind in self.miller)
@@ -1270,7 +1281,7 @@ class unit_cell(object):
                     if fwhm_ev>0:
                         fwhm_steps = fwhm_ev/(newenergy[1] - newenergy[0])
                         if self.DEBUG:
-                            print fwhm_steps
+                            print(fwhm_steps)
                         f1 = ndimage.gaussian_filter1d(f1, fwhm_steps/2.355)
                         f2 = ndimage.gaussian_filter1d(f2, fwhm_steps/2.355)
                     ff_list.append(f1-Z + 1j*f2)
@@ -1482,7 +1493,7 @@ class unit_cell(object):
                 self.calc_structure_factor(miller, DD=DD, DQ=DQ, Temp=Temp,
                                    subs=subs, evaluate=subs, Uaniso=Uaniso)
                 #subit = self.subs.iteritems()
-                Feval = self.F_0.subs(self.subs.iteritems()).n().expand() # self.F_0.subs(self.subs).n().expand()
+                Feval = self.F_0.subs(self.subs.items()).n().expand() # self.F_0.subs(self.subs).n().expand()
         
         
         
@@ -1521,7 +1532,7 @@ class unit_cell(object):
                 Feval = Feval.simplify()
             self.Feval = Feval
             if len(energy)==1 and not func_output:
-                return Feval.subs([(k,v.item()) for k,v in f.iteritems()])
+                return Feval.subs([(k,v.item()) for k,v in f.items()])
             F0_func = makefunc(Feval)
         
         if func_output:
@@ -1536,7 +1547,8 @@ class unit_cell(object):
             Returns all reciprocal lattice vectors that are
             symmetrically equivalent to v
         """
-        return set([tuple(G[:,:3].T.dot(v)) for G in self.generators])
+        v = sp.Matrix(v)
+        return set([tuple(G[:,:3].T * v) for G in self.generators])
     
     
     def iter_rec_space(self, qmax, independent=True):
@@ -1552,9 +1564,9 @@ class unit_cell(object):
         hmax = int(self.subs[self.a] * qmax)
         kmax = int(self.subs[self.b] * qmax)
         lmax = int(self.subs[self.c] * qmax)
-        hind = xrange(hmax, -hmax-1, -1)
-        kind = xrange(kmax, -kmax-1, -1)
-        lind = xrange(lmax, -lmax-1, -1)
+        hind = range(hmax, -hmax-1, -1)
+        kind = range(kmax, -kmax-1, -1)
+        lind = range(lmax, -lmax-1, -1)
         iter1 = itertools.product(hind, kind, lind)
         self._Rdone = set()
         kwargs = self.subs.copy()
@@ -1569,7 +1581,7 @@ class unit_cell(object):
             if independent:
                 self._Rdone.update(self.get_equivalent_vectors(R))
             return True
-        return itertools.ifilter(helper, iter1)
+        return ifilter(helper, iter1)
         
     
     
@@ -1686,9 +1698,9 @@ class unit_cell(object):
         for pol in self.E:
             currlen = sp.count_ops(str(self.E[pol]))
             for i in range(3):
-                print i
+                print(i)
                 for new in (sp.expand_mul(self.E[pol]), self.E[pol].expand(trig=True), sp.expand_complex(self.E[pol]).expand()):#, sp.trigsimp(self.E[pol])):
-                    print currlen
+                    print(currlen)
                     if sp.count_ops(str(new))<currlen:
                         currlen=sp.count_ops(str(new))
                         self.E[pol] = new
@@ -1850,7 +1862,7 @@ class unit_cell(object):
             kwargs = dict(filter(lambda x:x[1]==0, smth))
             kwvar = tuple(sorted(dict(filter(lambda x:x[1]!=0, smth)).keys()))
             theta, psi = self.calc_reflection_angles(orientation, **kwargs)
-            print key
+            print(key)
             coordfunc[key]  = lambdify(("psi_2", "epsilon") + kwvar, [psi.subs(self.subs), theta.subs(self.subs)], "numpy")
         def coordinates(miller, energy, psi2):
             key = zip(("h", "k", "l"), miller)
@@ -1872,7 +1884,7 @@ class unit_cell(object):
         SF_defaults.update(kwargs)
         
         DAFS_kw = ("DD", "DQ", "Temp", "fwhm_ev", "table", "simplify", "subs", "Uaniso")
-        DAFS_kw = dict([(k,v) for k in kwargs.iteritems() if k in DAFS_kw])
+        DAFS_kw = dict([(k,v) for k in kwargs.items() if k in DAFS_kw])
         
         AAS = SF_defaults["DD"] or SF_defaults["DQ"]
         print("Calculating all structure factors...")
@@ -1906,7 +1918,7 @@ class unit_cell(object):
         subs = [(sym, self.subs[sym]) for sym in self._metrik if sym in self.subs]
         self.g_psi = g_psi = Psi * self.Q * self.Gc.subs(subs) # general 2nd reflection, symbolic
         
-        print os.linesep,"rec. lattice coords to diffractometer coords:"
+        print(os.linesep+"rec. lattice coords to diffractometer coords:")
         sp.pprint(self.Q)
         
         K_g = k*vec_k_i + g_psi # wave vector for reflection g (K(h_m)), symbolic
@@ -1926,13 +1938,13 @@ class unit_cell(object):
         self.sigma_g = sigma_g = sigma_g / sp.sqrt(sigma_g[0]**2 + sigma_g[1]**2 + sigma_g[2]**2) # real norm
 
         if self.DEBUG:
-            print map(sp.count_ops, sigma_g), map(sp.count_ops, pi_g)
+            print(map(sp.count_ops, sigma_g), map(sp.count_ops, pi_g))
         if kwargs["simplify"]:
             print("Trying to simplify polarization vector expressions...")
             pi_g.simplify()
             sigma_g.simplify()
         if self.DEBUG:
-            print map(sp.count_ops, sigma_g), map(sp.count_ops, pi_g)
+            print(map(sp.count_ops, sigma_g), map(sp.count_ops, pi_g))
 
         # polarization matrizes:
         #alpha_0h_ss = 1
@@ -2006,9 +2018,9 @@ class unit_cell(object):
             if g==(0,0,0):
                 continue
             if verbose:
-                print g,
+                print(g, end="")
             subs.update(zip(self.miller, g))
-            hg = tuple(miller[i] - g[i] for i in xrange(3))
+            hg = tuple(miller[i] - g[i] for i in range(3))
             if hg==(0,0,0):
                 continue
             #F_g  = self.DAFS(energy,  g, force_refresh=False)
@@ -2027,10 +2039,10 @@ class unit_cell(object):
 
             if _Fmaxcache[g]<1e-6 or _Fmaxcache[hg]<1e-6:
                 if verbose:
-                    print "skipped"
+                    print("skipped")
                 continue
             elif verbose:
-                print ""
+                print("")
 
             F_g  = _Fcache[g]
             F_hg  = _Fcache[hg]
@@ -2177,9 +2189,9 @@ class unit_cell(object):
             if g==(0,0,0):
                 continue
             if verbose: 
-                print g,
+                print(g, end="")
             subs.update(zip(self.miller, g))
-            hg = tuple(miller[i] - g[i] for i in xrange(3))
+            hg = tuple(miller[i] - g[i] for i in range(3))
             if hg==(0,0,0):
                 continue
             #F_g  = self.DAFS(energy,  g, force_refresh=False)
@@ -2190,11 +2202,11 @@ class unit_cell(object):
             F_hg = self.F_0_func.dictcall(self.f)
             if abs(F_g).max()<1e-6 or abs(F_hg).max()<1e-6:
                 if verbose:
-                    print "skipped"
+                    print("skipped")
                 continue
             else:
                 if verbose:
-                    print ""
+                    print("")
             R_g = 1./R_g_f.dictcall(subs)
             #F_eff += alpha_0h2_f.dictcall(subs)* unity(Gamma * R_g*F_g*F_hg)
             F_eff += alpha_0g_f.dictcall(subs)*alpha_gh_f.dictcall(subs) \
@@ -2265,7 +2277,8 @@ class unit_cell(object):
             P = (1 + np.cos(2*theta)**2)/2. if Pfac else 1
             return L*P
         self._LP = LP
-        
+
+        energy = np.array(energy, ndmin=1)
         Lambda = self.eV_A / energy
         
         if xaxis == "theta":
@@ -2289,7 +2302,7 @@ class unit_cell(object):
             #if R == (0,0,0):
             #    continue
             if verbose:
-                print R
+                print(R)
             theta = thetafunc(energy, *R)
             if np.all(np.isnan(theta)):
                 continue
