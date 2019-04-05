@@ -191,7 +191,7 @@ def get_generators(sgnum=0, sgsym=None):
            "(sg_symbol, sg_number, generators, trmat) "
            "VALUES ('%s', '%i', '%s', '%s')"
            ) % (sgsym, sgnum, gendump, trmat)
-    print(sql)
+    #print(sql)
     cur.execute(sql)
     dbi.commit()
     dbi.close()
