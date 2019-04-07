@@ -170,8 +170,8 @@ def get_generators(sgnum=0, sgsym=None):
 
 
     if SETTPATH.endswith(".gz"):
-        from gzip import open
-        read = lambda fname: open(fname, "rt")
+        from gzip import open as gzopen
+        read = lambda fname: gzopen(fname, "rt")
     else:
         read = lambda fname: open(fname, "r")
 
