@@ -24,18 +24,20 @@ else:
     from urllib.parse import urlencode
 
 
-DBPATH = os.path.join(os.path.dirname(__file__), "space-groups.sqlite")
-SETTPATH = os.path.join(os.path.dirname(__file__), "settings.txt")
+SETTPATH = os.path.join(os.path.dirname(__file__), "settings.txt.gz")
 
+decode = np.vectorize(bytes.decode)
 
 def get_ITA_settings(sgnum):
     if os.path.isfile(SETTPATH):
-        settings = np.genfromtxt(SETTPATH, dtype="i2,O,O")
+        #settings = np.genfromtxt(SETTPATH, dtype="i2,O,O")
+        settings = np.genfromtxt(SETTPATH, dtype="i2,O,O", delimiter=";", autostrip=True)
         ind = settings["f0"]==sgnum
         #print(settings["f1"][ind])
-        return dict(zip(map(bytes.decode, settings["f1"][ind]), 
-                        map(bytes.decode, settings["f2"][ind])
-                       ))
+        return dict(zip(decode(settings["f1"][ind]), 
+                        decode(settings["f2"][ind])
+                      ))
+
     else:
         from lxml import etree
         print("Fetching ITA settings for space group %i"%sgnum)
@@ -104,13 +106,13 @@ def fetch_ITA_generators(sgnum, trmat=None):
         generator = list(map(sp.S, pre.split()))
         generators.append(sp.Matrix(generator).reshape(3,4))
     return generators
-    
+
 
 def get_generators(sgnum=0, sgsym=None):
     """
         Retrieves all Generators of a given Space Group Number (sgnum) a local
-        sqlite database OR from http://www.cryst.ehu.es and stores them into
-        the local sqlite database.
+        database OR from http://www.cryst.ehu.es and stores them into
+        the local database.
         
         Inputs:
             sgnum : int
@@ -132,7 +134,10 @@ def get_generators(sgnum=0, sgsym=None):
                 sgsym = str(sgnum)
             sgnum = 0
     if sgnum==0 and sgsym!=None and os.path.isfile(SETTPATH):
-        settings = np.genfromtxt(SETTPATH, dtype="i2,O,O")
+        #settings = np.genfromtxt(SETTPATH, dtype="i2,O,O")
+        settings = np.genfromtxt(SETTPATH, dtype="i2,O,O", delimiter=";", autostrip=True)
+        settings["f1"] = decode(settings["f1"])
+        settings["f2"] = decode(settings["f2"])
         ind = settings["f1"] == sgsym
         if not ind.sum()==1:
             raise ValueError("Space group not found: %s"%sgsym)
@@ -162,39 +167,31 @@ def get_generators(sgnum=0, sgsym=None):
         trmat = settings[sgsym]
     else:
         raise ValueError("Integer required for space group number (`sgnum')")
-    
-    import sqlite3
-    import base64
-    dbi=sqlite3.connect(DBPATH)
-    cur=dbi.cursor()
-    cur.execute("SELECT * FROM spacegroups WHERE sg_symbol = '%s'" %sgsym)
-    result=cur.fetchone()
-    dbi.close()
-    if result:
-        try:
-            return pickle.loads(base64.b64decode(result[2]))
-        except:
-            dbi=sqlite3.connect(DBPATH)
-            cur=dbi.cursor()
-            cur.execute("DELETE FROM spacegroups WHERE sg_symbol = '%s'"%sgsym)
-            dbi.commit()
-            dbi.close()
-            print("Deleted old dataset.")
-    print("Space Group %s not yet in database. "\
-          "Fetching from internet..."%sgsym)
-    print((sgnum, trmat))
-    generators = fetch_ITA_generators(sgnum, trmat)
-    gendump = base64.b64encode(pickle.dumps(generators)).decode()
-    dbi=sqlite3.connect(DBPATH)
-    cur=dbi.cursor()
-    sql = ("INSERT INTO spacegroups "
-           "(sg_symbol, sg_number, generators, trmat) "
-           "VALUES ('%s', '%i', '%s', '%s')"
-           ) % (sgsym, sgnum, gendump, trmat)
-    #print(sql)
-    cur.execute(sql)
-    dbi.commit()
-    dbi.close()
+
+
+    if SETTPATH.endswith(".gz"):
+        from gzip import open
+        read = lambda fname: open(fname, "rt")
+    else:
+        read = lambda fname: open(fname, "r")
+
+
+    generators = []
+    with read(SETTPATH) as fh:
+        while True:
+            line = fh.readline().split(";")
+            if len(line)<2:
+                continue
+            if sgsym in line[1]:
+                break
+        while True:
+            line = fh.readline()
+            if not line.startswith("#"):
+                break
+            generators.append(sp.S(line.strip("# ").split(";")[1]))
+
+    # fallback
+    #generators = fetch_ITA_generators(sgnum, trmat)
     return generators
     
 

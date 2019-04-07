@@ -16,7 +16,7 @@ setup( name = "pyasf",
        packages = find_packages(),
        package_data = {
             "pyasf": ["space-groups.sqlite", 
-                      "settings.txt", 
+                      "settings.txt.gz", 
                       "f0_lowq.sqlite",
                       "coppens/*"],
             "pyasf.materials": ["cif/*"]},
