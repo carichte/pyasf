@@ -135,6 +135,15 @@ class SymbolDict(dict):
         return super(SymbolDict, self).__getitem__(sym)
 
 
+class AttrDict(dict):
+    def __getattr__(self, attr):
+        return self[attr]
+    def __setattr__(self, attr, value):
+        self[attr] = value
+    def __dir__(self):
+        return super(AttrDict, self).__dir__() + list(self)
+
+
 
 def mkfloat(string, get_digits=False):
     """
@@ -1125,8 +1134,10 @@ class unit_cell(object):
         if psi is None:
             self.psi = psi = sp.Symbol("psi", real=True)
             self.S[psi.name] = psi
-        
+
+        self.vectors = AttrDict()
         sigma = sp.Matrix([0,0,1])
+        self.vectors.sigma = sigma
         if subs:
             theta = self.theta
             k = self.energy / self.eV_A
@@ -1140,10 +1151,14 @@ class unit_cell(object):
         self.k_plus = 2 * k * sp.cos(self.theta)
         pi_i = sp.Matrix([sp.cos(theta),  sp.sin(theta), 0])
         pi_s = sp.Matrix([sp.cos(theta), -sp.sin(theta), 0])
+        self.vectors.pi_i = pi_i
+        self.vectors.pi_s = pi_s
         
         vec_k_i = sp.Matrix([-sp.sin(theta), sp.cos(theta), 0]) #alt
         vec_k_s = sp.Matrix([ sp.sin(theta), sp.cos(theta), 0]) #alt
-        self.vec_k_i, self.vec_k_s = vec_k_i, vec_k_s
+        self.vectors.k_i = vec_k_i
+        self.vectors.k_s = vec_k_s
+
         # introduce rotational matrix
         self.Psi = Psi = np.array([[1,            0,           0],
                                    [0,  sp.cos(psi), sp.sin(psi)],
@@ -1180,7 +1195,7 @@ class unit_cell(object):
 #            self.Fd += self.Fd_psi_DD
 #        if DQ:
 #            self.Fd += sp.I * self.q      * self.Fd_psi_DQs[0] \
-#                     + sp.I * self.k_plus * self.Fd_psi_DQa[1]
+#                     + sp.I * self.vec_k_plus * self.Fd_psi_DQa[1]
 #       
         # The Contraction: 
 #        self.Fd_psi_DQ_out = self.Fd_psi_DQ.copy().transpose(0,2,1)
@@ -1190,7 +1205,7 @@ class unit_cell(object):
         self.Fd = np.eye(3) * self.Fd_psi_0
         
         if DD:
-            self.Fd_psi_DD
+            self.Fd += self.Fd_psi_DD
         
         if DQ:
             self.Fd += sp.I * k * ( np.tensordot(vec_k_i, self.Fd_psi_DQin, axes=(0,0)).squeeze() \
@@ -1204,12 +1219,13 @@ class unit_cell(object):
         
         self.E = {}
         self.E["ss"] = (sigma.T * self.Fd * sigma)[0] 
-        self.E["sp"] = (pi_s.T * self.Fd * sigma)[0] # Vertauscht in und sc?
+        self.E["sp"] = (pi_s.T * self.Fd * sigma)[0]
         self.E["ps"] = (sigma.T * self.Fd * pi_i)[0]
         self.E["pp"] = (pi_s.T * self.Fd * pi_i)[0]
-        
-        return True
-    
+
+        return self.E
+
+
     
     def feed_feff(self, label, energy, fprime, fsecond):
         """
