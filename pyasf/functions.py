@@ -25,6 +25,8 @@ else:
 
 
 SETTPATH = os.path.join(os.path.dirname(__file__), "settings.txt.gz")
+if not os.path.isfile(SETTPATH):
+    SETTPATH = SETTPATH[:-3]
 
 decode = np.vectorize(bytes.decode)
 

@@ -19,8 +19,8 @@ for sg in SGs:
         trmat = settings[sgsym]
         print((sg, sgsym, trmat))
 
-        generators = pyasf.fetch_ITA_generators(sg, sgsym)
-        #generators = pyasf.get_generators(sg, sgsym)
+        #generators = pyasf.fetch_ITA_generators(sg, sgsym)
+        generators = pyasf.get_generators(sg, sgsym)
         with open("generators.txt", "a") as fh:
             fh.write(os.linesep)
             fh.write("%i; %s; %s%s"%(sg, sgsym, trmat, os.linesep))

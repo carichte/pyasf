@@ -21,7 +21,7 @@ def get_cs(**kwargs):
     cs.add_atom("O",  (0.0534, 0.3396, 0.0695), 1, assume_complex=True)
     cs.subs[cs.a] =  5.15428
     cs.subs[cs.c] = 13.7835
-    if kwargs.has_key("temperature"):
+    if "temperature" in kwargs:
         fac = TExp(kwargs["temperature"])
         cs.subs[cs.a] *= fac[0,0]
         cs.subs[cs.c] *= fac[2,2]

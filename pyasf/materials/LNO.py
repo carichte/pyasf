@@ -19,7 +19,7 @@ def get_cs(**kwargs):
     cs.subs[cs.a] = 5.14829
     cs.subs[cs.c] = 13.8631
     
-    if kwargs.has_key("temperature"):
+    if "temperature" in kwargs:
         fac = TExp(kwargs["temperature"])
         cs.subs[cs.a] *= fac[0,0]
         cs.subs[cs.c] *= fac[2,2]
