@@ -233,7 +233,7 @@ class unit_cell(object):
             unit_cell.q = 2 * sin(theta)/lambda
             
     """
-    eps = 10*np.finfo(np.float64).eps
+    eps = 100*np.finfo(np.float64).eps
     u = 1.660538921e-27 # atomic mass unit
     electron_radius = 2.8179403e-15 # meters
     avogadro = 6.022142e23
@@ -349,7 +349,14 @@ class unit_cell(object):
         self.qfunc = makefunc(self.q, sp)
         self.V = sp.sqrt(self.metric_tensor.det())
 
-    def add_atom(self, label, position, isotropic=True, assume_complex=True, dE=0, occupancy=1, charge=None):
+    def add_atom(self, label,
+                       position,
+                       isotropic=True,
+                       assume_complex=True,
+                       dE=0,
+                       occupancy=1,
+                       charge=None,
+                       max_denominator=1000):
         """
             Method to fill the asymmetric unit with atoms.
 
@@ -379,7 +386,11 @@ class unit_cell(object):
         position = list(position)
         for i in range(3):
             if isinstance(position[i], six.string_types):
-                position[i] = sp.S(Fraction(position[i]).limit_denominator(1000))
+                position[i] = sp.S(Fraction(position[i]).limit_denominator(max_denominator))
+            else:
+                pos = Fraction("%.15g"%position[i]).limit_denominator(max_denominator)
+                if (pos.denominator < max_denominator/10.):
+                    position[i] = pos
         #label = label.replace("_", "")
         labeltest = label[0].upper()
         if len(label) > 1:
@@ -595,8 +606,8 @@ class unit_cell(object):
                 iso = 0
             
             self.Uiso[label] = iso
-            self.add_atom(label, position, isotropic, assume_complex=True, 
-                          occupancy=occ, charge=charge)
+            self.add_atom(label, position, isotropic, assume_complex=True,
+                          occupancy=occ, charge=charge, max_denominator=max_denominator)
             self.eps = 10**(-digits)
         
         vr = self.ar, self.br, self.cr
