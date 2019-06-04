@@ -189,14 +189,16 @@ def applyfunc(Arr, Func):
                 
         Inputs:
             Arr : numpy.ndarray
-            Method : str -- the function
+            Func : the function
     """
     for ele in np.nditer(Arr, flags=["refs_ok"], op_flags=['readwrite']):
         ele[...] = Func(ele.item())
 
+
 ArraySimp1 = np.vectorize(
     lambda ele:ele.expand(trig=True).rewrite(sp.sin, sp.exp).expand() if hasattr(ele, "expand") else ele,
     doc="Vectorized function to simplify symbolic array elements using rewrite")
+
 
 ArraySimp2 = np.vectorize(
     lambda ele:ele.rewrite(sp.exp, sp.sin).expand() if hasattr(ele, "rewrite") else ele,
@@ -224,14 +226,13 @@ class unit_cell(object):
             - calculate the scattered field amplitus (self.E) at given azimut
               'psi' and glancing angle 'theta' (self.calc_scattered_amplitude)
             - try to simplify the resulting expressions in self.E (self.simplify)
-        
-        
+
+
         Units:
             energy : eV
             lambda = 12.398/energy
-            
+
             unit_cell.q = 2 * sin(theta)/lambda
-            
     """
     eps = 100*np.finfo(np.float64).eps
     u = 1.660538921e-27 # atomic mass unit
@@ -293,7 +294,8 @@ class unit_cell(object):
         self.masses = dict()
         self.debye_temperature = dict()
         self.einstein_temperature = dict()
-        
+        self.vectors = AttrDict()
+
         if str(structure).isdigit():
             structure = int(structure)
             if structure<=230:
@@ -661,12 +663,25 @@ class unit_cell(object):
                 new_position = W * site + w
                 new_position = new_position.applyfunc(stay_in_UC)
                 diff = (new_position - site)
-                dist = diff.dot(diff)
+                dist = []
+
+                # check if atom was moved to neighboring cell:
+                for v in itertools.product((-1,0,1), (-1,0,1), (-1,0,1)):
+                    v = sp.Matrix(v)
+                    diff_ = diff + v
+                    if diff_.has(sp.Symbol):
+                        # then it's not the same position
+                        dist.append(1)
+                        continue
+                    dist.append(diff_.dot(diff_))
+
+                dist = min(dist) if dist else 0
+
                 if self.DEBUG: 
                     print("Generator #%i"%ii)
                     print((dist, diff))
                 #if (new_position == self.AU_positions[label]).all(): #1.8.13
-                if not sp.Expr.has(dist, sp.Symbol) and dist < self.eps:
+                if dist < self.eps:
                     if self.DEBUG:
                         print(generator)
                     # International Tables for Crystallography (2006). Vol. D, ch. 1.1, pp. 3-33
@@ -702,8 +717,7 @@ class unit_cell(object):
                     if self.DEBUG:
                         sp.pprint([sp.Matrix(new_Beta),Beta])
                     Uequations.update(np.ravel(new_Beta - Beta))
-                if self.DEBUG:
-                    print(os.linesep*2)
+
             equations.discard(0)
             Uequations.discard(0)
             self._equations[label] = equations
@@ -803,11 +817,18 @@ class unit_cell(object):
                 new_position = new_position.applyfunc(stay_in_UC)
                 dist = []
 
+                # check if atom was moved to neighboring cell:
                 for position in self.positions[label]:
                     diff = new_position - position
-                    dist.append(diff.dot(diff))
+                    for v in itertools.product((-1,0,1), (-1,0,1), (-1,0,1)):
+                        v = sp.Matrix(v)
+                        diff_ = diff + v
+                        if diff_.has(sp.Symbol):
+                            # then it's not the same position
+                            continue
+                        dist.append(diff_.dot(diff_))
 
-                dist = [d for d in dist if np.isscalar(d) or not hassymb(d)]
+                #dist = [d for d in dist if np.isscalar(d) or not hassymb(d)]
 
                 if not dist or not min(dist) < self.eps:
                     #if new_position not in self.positions[label]:
@@ -1146,7 +1167,6 @@ class unit_cell(object):
             self.psi = psi = sp.Symbol("psi", real=True)
             self.S[psi.name] = psi
 
-        self.vectors = AttrDict()
         sigma = sp.Matrix([0,0,1])
         self.vectors.sigma = sigma
         if subs:
