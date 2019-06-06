@@ -6,6 +6,7 @@
     Written by Carsten Richter (carsten.richter@desy.de)
     http://www.desy.de/~crichter
 """
+from __future__ import print_function
 import itertools
 import copy
 import six
@@ -123,7 +124,7 @@ class SymbolDict(dict):
     def __getitem__(self, sym):
         #if not self.has_key(sym) and isinstance(sym, str):
         if not sym in self and isinstance(sym, six.string_types):
-            syms = self.keys()
+            syms = list(self.keys())
             syms_str = [S.name for S in syms if isinstance(S, sp.Symbol)]
             num = syms_str.count(sym)
             if num==0:
@@ -131,7 +132,7 @@ class SymbolDict(dict):
             elif num > 1:
                 raise KeyError("Multiple symbols found for name: `%s`"%sym)
             else:
-                sym = list(syms[syms_str.index(sym)])
+                sym = syms[syms_str.index(sym)]
         return super(SymbolDict, self).__getitem__(sym)
 
 
@@ -929,7 +930,7 @@ class unit_cell(object):
         return self.SumFormula
     
     def calc_structure_factor(self, miller=None, DD=True, DQ=True, Temp=True, simplify=False,
-                                    subs=False, subs_U=False, evaluate=False, Uaniso=True):
+                                    subs=False, evaluate=False, Uaniso=True):
         """
             Takes the three Miller-indices of Type int and calculates the 
             Structure Factor in reciprocal basis.
@@ -955,9 +956,11 @@ class unit_cell(object):
         for label in self.positions: # get position, formfactor and symmetry if DQ tensor
             o = self.occupancy[label]
             if Uaniso and label in self.Uaniso:
-                if subs_U:
+                if subs:
                     Uval = self.Uaniso[label]
-                    self.subs.update(zip(sp.flatten(self.U[label]), map(float, sp.flatten(Uval))))
+                    vald = zip(sp.flatten(self.U[label]), sp.flatten(Uval))
+                    vald = ((k, float(v)) for (k,v) in vald if isinstance(k, sp.Symbol))
+                    self.subs.update(vald)
             else:
                 Uval = self.Uiso[label]
             for i, r in enumerate(self.positions[label]):
@@ -966,8 +969,6 @@ class unit_cell(object):
                         # International Tables for Crystallography (2006).
                         # Vol. D, Chapter 1.9, pp. 228.242.
                         Beta = self.Beta[label][i]
-                        if subs:
-                            Beta = Beta.subs(self.subs)
                         DW = sp.exp(-G.dot(Beta*G)*Temp)
                     else:
                         DW = sp.exp(-2 * sp.pi**2 * self.q**2 * Uval * Temp).subs(self.subs)
@@ -1478,9 +1479,9 @@ class unit_cell(object):
             If ``func_output`` is True, a function for the structure amplitude
             F(E) is returned. Otherwise, it's the Intensity array.
         """
-        if not hasattr(self, "F_0"):
-            self.calc_structure_factor(miller, DD=DD, DQ=DQ, Temp=Temp,
-                                       subs=subs, evaluate=subs, Uaniso=Uaniso)
+        #if not hasattr(self, "F_0") or force_refresh:
+        #    self.calc_structure_factor(miller, DD=DD, DQ=DQ, Temp=Temp,
+        #                               subs=subs, evaluate=subs, Uaniso=Uaniso)
         
         miller = tuple(map(int, miller))
         assert len(miller)==3, "Input for `miller` index must be 3-tuple of int"
@@ -1540,15 +1541,14 @@ class unit_cell(object):
                 self.calc_structure_factor(miller, DD=DD, DQ=DQ, Temp=Temp,
                                    subs=subs, evaluate=subs, Uaniso=Uaniso)
                 #subit = self.subs.iteritems()
-                Feval = self.F_0.subs(self.subs.items()).n().expand() # self.F_0.subs(self.subs).n().expand()
-        
+            Feval = self.F_0.n().expand()
         
         
         q = float(self.qfunc.dictcall(self.subs).n())
         if self.f0.get("__q__") != q:
             self.f0.clear()
             self.f0["__q__"] = q
-        
+
         for label in self.AU_formfactors:
             ffsymbol = self.AU_formfactors[label]
             ion = self.get_ion(label)
@@ -1556,32 +1556,38 @@ class unit_cell(object):
                 if self.DEBUG:
                     print("Calculating nonresonant scattering amplitude for %s"%ion)
                 self.f0[ion] = self.f0func(ion, q)
-            
+
             f[ffsymbol] = f1f2[label] + self.f0[ion]
-        
-        for label in self.U:
-            if Uaniso:
-                if label in self.Uaniso:
-                    Uval = self.Uaniso[label]
-                else:
-                    Uval = sp.eye(3) * self.Uiso[label]
-                if self.DEBUG:
-                    print("Using U values for %s: %s"%(label, str(Uval)))
-                vald = zip(sp.flatten(self.U[label]), map(float, sp.flatten(Uval)))
-                self.subs.update(filter(lambda s: isinstance(s[0], sp.Symbol), vald))
-        
-        
+
+        if not force_refresh or not subs:
+            for label in self.U:
+                if Uaniso:
+                    if label in self.Uaniso:
+                        Uval = self.Uaniso[label]
+                    else:
+                        Uval = sp.eye(3) * self.Uiso[label]
+                    if self.DEBUG:
+                        print("Using U values for %s: %s"%(label, str(Uval)))
+                    vald = zip(sp.flatten(self.U[label]), sp.flatten(Uval))
+                    vald = ((k, float(v)) for (k,v) in vald if isinstance(k, sp.Symbol))
+                    self.subs.update(vald)
+
+
+
         if self.F_0_func != None:
             F0_func = self.F_0_func
             f.update(dict(zip(self.subs.keys(), map(float, self.subs.values()))))
         else:
+            #Feval = self.F_0.subs(self.subs.items()).n().expand() # self.F_0.subs(self.subs).n().expand()
+            f.update(self.subs)
             if simplify:
                 Feval = Feval.simplify()
             self.Feval = Feval
             if len(energy)==1 and not func_output:
                 return Feval.subs([(k,v.item()) for k,v in f.items()])
+
             F0_func = makefunc(Feval)
-        
+
         if func_output:
             return F0_func
         else:
@@ -1926,8 +1932,7 @@ class unit_cell(object):
             beam approximation
             http://dx.doi.org/10.1107/S0108767396011117
         """
-        SF_defaults = dict(DD=False, DQ=False, subs=True, evaluate=True, 
-                           subs_U=True)
+        SF_defaults = dict(DD=False, DQ=False, subs=True, evaluate=True)
         SF_defaults.update(kwargs)
         
         DAFS_kw = ("DD", "DQ", "Temp", "fwhm_ev", "table", "simplify", "subs", "Uaniso")
@@ -2144,8 +2149,7 @@ class unit_cell(object):
             beam approximation
             http://dx.doi.org/10.1107/S0108767396011117
         """
-        SF_defaults = dict(DD=False, DQ=False, subs=True, evaluate=True, 
-                           subs_U=True)
+        SF_defaults = dict(DD=False, DQ=False, subs=True, evaluate=True)
         SF_defaults.update(SF_kwargs)
         AAS = SF_defaults["DD"] or SF_defaults["DQ"]
         print("Calculating all structure factors...")
