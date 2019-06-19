@@ -1713,6 +1713,7 @@ class unit_cell(object):
             U =   self.hbar/(2. * m * self.u * omega ) \
                    / np.tanh( self.hbar*omega / (2*self.boltzmann*temperature)) *1e10**2
         elif model == "debye":
+            # 10.1007/978-3-642-74291-0 Eq. (3.2.24)
             # B = 8 * pi**2 * U
             U =  1e10**2 * 3 * self.hbar**2 / (m * self.u * Tc * self.boltzmann) * \
                   ( debye_phi(Tc/temperature) / (Tc/temperature) + 0.25)
