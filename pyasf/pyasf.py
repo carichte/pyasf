@@ -956,7 +956,7 @@ class unit_cell(object):
         for label in self.positions: # get position, formfactor and symmetry if DQ tensor
             o = self.occupancy[label]
             if Uaniso and label in self.Uaniso:
-                if subs:
+                if subs is True:
                     Uval = self.Uaniso[label]
                     vald = zip(sp.flatten(self.U[label]), sp.flatten(Uval))
                     vald = ((k, float(v)) for (k,v) in vald if isinstance(k, sp.Symbol))
@@ -995,8 +995,12 @@ class unit_cell(object):
         self.d = 1/self.q
         self.theta = sp.asin(self.eV_A/(2*self.d*self.energy))
 
-        if subs:
+        if subs is True:
             self.F_0 = self.F_0.subs(self.subs)
+        elif isinstance(subs, collections.Sequence):
+            subitems = [(k, self.subs[k]) for k in subs]
+            self.F_0 = self.F_0.subs(subitems)
+
         if evaluate:
             self.F_0 = self.F_0.n().expand()
         if simplify:
