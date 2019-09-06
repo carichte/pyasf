@@ -1263,7 +1263,7 @@ class unit_cell(object):
 
 
     
-    def feed_feff(self, label, energy, fprime, fsecond):
+    def feed_feff(self, label, energy, fprime, fsecond, fit=True):
         """
             Input function for dispersion fine structure:
         """
@@ -1282,14 +1282,14 @@ class unit_cell(object):
         Z = elements.Z[element]
         if fprime.max()/Z > 0.1:
             fprime -= Z
-            
+
         self.feff_func[label] = interp1d(energy, fprime + 1j*fsecond)
-        
+        self.fit_feff = fit
         return True
     
     
     
-    def get_f1f2_isotropic(self, energy, fwhm_ev=1e-4, table="Sasaki"):
+    def get_f1f2_isotropic(self, energy, fwhm_ev=1e-4, table="Sasaki", feff=True):
         energy = np.array(energy, dtype=float, ndmin=1)
         isort = energy.argsort()
         emin, emax = energy[isort[[0, -1]]]
@@ -1344,13 +1344,15 @@ class unit_cell(object):
         f =  dict(zip(self._ftab.atoms, f))
         
         for atom in self.feff_func:
+            if not feff:
+                break
             if atom in f:
                 func = self.feff_func[atom]
                 ind  = energy >= func.x.min()
                 ind *= energy <= func.x.max()
                 energy_sel = energy[ind]
                 f1f2 = self.feff_func[atom](energy_sel)
-                if hasattr(self, "fit_feff") and self.fit_feff:
+                if self.fit_feff:
                     imin  = energy_sel.argmin()
                     imax = energy_sel.argmax()
                     emin = max(self._ftab.x.min(), func.x.min())
