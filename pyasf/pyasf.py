@@ -971,7 +971,7 @@ class unit_cell(object):
                         Beta = self.Beta[label][i]
                         DW = sp.exp(-G.dot(Beta*G)*Temp)
                     else:
-                        DW = sp.exp(-2 * sp.pi**2 * self.q**2 * Uval * Temp).subs(self.subs)
+                        DW = sp.exp(-2 * sp.pi**2 * self.q**2 * Uval * Temp)
                 else:
                     DW = 1
 
