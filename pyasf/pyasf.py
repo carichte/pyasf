@@ -1548,7 +1548,7 @@ class unit_cell(object):
                 self.calc_structure_factor(miller, DD=DD, DQ=DQ, Temp=Temp,
                                    subs=subs, evaluate=subs, Uaniso=Uaniso)
                 #subit = self.subs.iteritems()
-            Feval = self.F_0.n().expand()
+                Feval = self.F_0.n().expand()
         
         
         q = float(self.qfunc.dictcall(self.subs).n())
@@ -1566,7 +1566,7 @@ class unit_cell(object):
 
             f[ffsymbol] = f1f2[label] + self.f0[ion]
 
-        if not force_refresh or not subs:
+        if Uaniso and (not force_refresh or not subs):
             for label in self.U:
                 if Uaniso:
                     if label in self.Uaniso:
@@ -1580,26 +1580,24 @@ class unit_cell(object):
                     self.subs.update(vald)
 
 
-
+        f.update(self.subs)
         if self.F_0_func != None:
             F0_func = self.F_0_func
-            f.update(dict(zip(self.subs.keys(), map(float, self.subs.values()))))
+
         else:
-            #Feval = self.F_0.subs(self.subs.items()).n().expand() # self.F_0.subs(self.subs).n().expand()
-            f.update(self.subs)
+            Feval = self.F_0.subs(self.subs.items()).n().expand() # self.F_0.subs(self.subs).n().expand()
             if simplify:
                 Feval = Feval.simplify()
             self.Feval = Feval
             if len(energy)==1 and not func_output:
                 return Feval.subs([(k,v.item()) for k,v in f.items()])
 
-            F0_func = makefunc(Feval)
+            self.F_0_func = F0_func = makefunc(Feval)
 
         if func_output:
             return F0_func
         else:
             return F0_func.dictcall(f)
-    
     
     
     def get_equivalent_vectors(self, v):
