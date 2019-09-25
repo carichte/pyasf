@@ -417,7 +417,8 @@ class unit_cell(object):
         U = sp.zeros(3,3)
         for i,j in itertools.product(ind, ind):
             if i<=j: 
-                Sym = sp.Symbol("U_%s_%i%i"%(label, i+1, j+1), real=True, positive=(i==j))
+                Sym = sp.Symbol("U_%s_%i%i"%(label, i+1, j+1), real=True) #, positive=(i==j))
+                # positive produces problems when solving tensor symmetry :/
                 self.S[Sym.name] = Sym
                 U[i,j] = U[j,i] = Sym
         self.U[label] = U
