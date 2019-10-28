@@ -1007,10 +1007,11 @@ class unit_cell(object):
         if simplify:
             self.F_0 = self.F_0.simplify()
         
-        if self.F_0.has(sp.Symbol):
-            self.F_0_func = makefunc(self.F_0)
-        else:
-            self.F_0_func = None
+        self.F_0_func = makefunc(self.F_0)
+        # if self.F_0.has(sp.Symbol):
+        #     self.F_0_func = makefunc(self.F_0)
+        # else:
+        #     self.F_0_func = None
                 
         # simplify:
         
@@ -1590,7 +1591,7 @@ class unit_cell(object):
                 Feval = Feval.simplify()
             self.Feval = Feval
             if len(energy)==1 and not func_output:
-                return Feval.subs([(k,v.item()) for k,v in f.items()])
+                return Feval.subs(self.f).item()
 
             self.F_0_func = F0_func = makefunc(Feval)
 
