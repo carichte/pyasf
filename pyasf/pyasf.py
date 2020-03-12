@@ -24,6 +24,7 @@ else:
     from io import StringIO
     from urllib.request import urlopen
     ifilter = filter
+
 from time import time
 from fractions import Fraction
 from scipy.interpolate import interp1d
@@ -37,13 +38,9 @@ from . import FormFactors
 
 """
     TODO:
-        consider different space group settings - check
-        add symmetry to DQ tensors - check
         DQ part imaginary?
 """
 
-
-#class Interp1dDict(interp1d):
 
 
 
@@ -1491,7 +1488,7 @@ class unit_cell(object):
         #    self.calc_structure_factor(miller, DD=DD, DQ=DQ, Temp=Temp,
         #                               subs=subs, evaluate=subs, Uaniso=Uaniso)
         
-        miller = tuple(map(int, miller))
+        #miller = tuple(map(int, miller))
         assert len(miller)==3, "Input for `miller` index must be 3-tuple of int"
         
         oldmiller = self.hkl()
@@ -1849,6 +1846,84 @@ class unit_cell(object):
             done.append(ffsymbol)
         return self.F_0.subs(self.subs).subs(self.subs)
         
+
+    def get_stereographic_projection(self, pole, azi_ref, energy, tthmin=0, tthmax=sp.pi, Ithresh=0.01, verbose=False):
+        """
+            Calculates the 2D positions of all reciprocal lattice points on a
+            stereographic projection in polar coordinates (r, phi).
+            
+            Arguments:
+                pole : hkl of a reciprocal lattice point parallel to the pole
+                azi_ref : hkl of the reciprocal lattice vector marking the
+                          azimuthal zero position
+            
+            Returns: r, phi, intensity
+                Nd arrays of the positions            
+        """
+        latt_par = self.a, self.b, self.c, self.alpha, self.beta, self.gamma
+        lattice = dict([(k, self.subs[k]) for k in latt_par if k in self.subs])
+        
+        Gc_f = makefunc(self.Gc.subs(lattice), mathmodule="sympy")
+        V = self.V.subs(lattice)
+        
+        pole_c = Gc_f(*pole).normalized().n()
+        azi_ref_c = Gc_f(*azi_ref).normalized().n()
+        azi_ref2_c = pole_c.cross(azi_ref_c).n().normalized()
+        
+        
+        Lambda = 12398./energy
+        qmax = float(2*sp.sin(tthmax/2)/Lambda)
+
+        self.calc_structure_factor(Temp=False,
+                                   Uaniso=False,
+                                   DD=False,
+                                   DQ=False,
+                                   subs=True,
+                                   evaluate=True)
+        
+        th_f = makefunc(self.theta)
+
+
+        results = []
+        for R in self.iter_rec_space(qmax, independent=False):
+            if R == (0,0,0):
+                continue
+            if verbose:
+                print(R, end=", ")
+
+            tth = th_f(energy, *R)*2
+            if tth < tthmin or tth > tthmax:
+                continue
+
+            F = self.DAFS(energy, R, force_refresh=False) / V
+            I = abs(F)**2
+
+            if I < Ithresh:
+                continue
+            Gc = Gc_f(*R)
+            Gc_vert = Gc.dot(pole_c)
+            Gc_ip = Gc - Gc_vert * pole_c
+            Gc_x = float(Gc_ip.dot(azi_ref_c))
+            Gc_y = float(Gc_ip.dot(azi_ref2_c))
+            
+            theta = sp.acos(Gc_vert / Gc.norm())
+            r = float(sp.sin(theta))
+            if Gc_x==Gc_y==0:
+                phi = 0
+            else:
+                phi = sp.atan2(Gc_y, Gc_x)
+
+            
+            results.append((r, phi, I, tth, R[0], R[1], R[2]))
+        
+        if verbose:
+            print("")
+        
+        dtype = [('r', 'f4'), ('phi', 'f4'), ('I', 'f4'), ('tth', 'f4'), ('h', 'i4'), ('k', 'i4'), ('l', 'i4')]
+        results = np.array(results, dtype=dtype)
+        
+        return results
+
 
     def calc_reflection_angles(self, orientation, energy = None, **kwargs):
         """
@@ -2349,13 +2424,13 @@ class unit_cell(object):
         width = np.radians(width)**2
         grainsize *= 1e4 # microns to angstrom
         if qmax == None:
-            qmax = np.nanmax(2 / Lambda * np.sin(th_arr))
+            qmax = (2 / Lambda * np.sin(th_arr.max()))
             if verbose:
                 print("Using max. value 2sin(th)/lambda: %f"%qmax)
         Int = np.zeros_like(th_arr+energy)
         V = float(self.V.subs(self.subs))
         self.calc_structure_factor(subs=True, evaluate=True)
-        thetafunc = makeufunc(self.theta)
+        thetafunc = makefunc(self.theta)
         for R in self.iter_rec_space(qmax):
             #if R == (0,0,0):
             #    continue
