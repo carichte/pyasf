@@ -1532,7 +1532,7 @@ class unit_cell(object):
         #    self.calc_structure_factor(miller, DD=DD, DQ=DQ, Temp=Temp,
         #                               subs=subs, evaluate=subs, Uaniso=Uaniso)
 
-        #miller = tuple(map(int, miller))
+        miller = tuple(miller)#map(int, miller))
         assert len(miller)==3, "Input for `miller` index must be 3-tuple of int"
 
         oldmiller = self.hkl()
