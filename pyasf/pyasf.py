@@ -797,7 +797,7 @@ class unit_cell(object):
         """
         self.multiplicity = collections.defaultdict(int)
         self.positions = collections.defaultdict(list)
-        self.formfactors = collections.defaultdict(list)
+        #self.formfactors = collections.defaultdict(list)
         self.formfactorsDD = collections.defaultdict(list)
         self.formfactorsDQ = collections.defaultdict(list)
         self.Beta = collections.defaultdict(list)
@@ -833,8 +833,8 @@ class unit_cell(object):
                     #if new_position not in self.positions[label]:
                     self.Beta[label].append(sp.Matrix(full_transform(W.T, Beta)))
                     #self.Beta[label].append(sp.Matrix(full_transform(W.inv().T, Beta)))
-                    if label in self.AU_formfactors:
-                        self.formfactors[label].append(self.AU_formfactors[label])
+                    #if label in self.AU_formfactors:
+                    #    self.formfactors[label].append(self.AU_formfactors[label])
                     if label in self.AU_formfactorsDD:
                         #self.formfactorsDD[label].append(full_transform(W, self.AU_formfactorsDD[label]))
                         self.formfactorsDD[label].append(full_transform(W.inv(), self.AU_formfactorsDD[label]))
@@ -1004,7 +1004,7 @@ class unit_cell(object):
             else:
                 Uval = self.Uiso[label]
 
-            
+            F_0_orbit = 0
             for i, r in enumerate(self.positions[label]):
                 if Temp:
                     if Uaniso:
@@ -1020,12 +1020,13 @@ class unit_cell(object):
                 phase = sp.exp(2*sp.pi*sp.I * G.dot(r))
                 if self.DEBUG:
                     print((r, G.dot(r)))
-                if label in self.formfactors:
-                    f = self.formfactors[label][i]
-                    self.F_0 += o * f * phase * DW
+
+                F_0_orbit += phase * DW
+
                 if DD and label in self.formfactorsDD:
                     f = self.formfactorsDD[label][i]
                     self.F_DD += o * f * phase * DW
+
                 if DQ and label in self.formfactorsDQ:
                     f_in = self.formfactorsDQ[label][i]
                     f_sc = - f_in.copy().transpose(0,2,1)
@@ -1034,6 +1035,7 @@ class unit_cell(object):
                     self.F_DQin += o * f_in * phase * DW
                     self.F_DQsc += o * f_sc * phase * DW
 
+            self.F_0 += o * self.AU_formfactors[label] * F_0_orbit
 
         if subs is True:
             self.F_0 = self.F_0.subs(self.subs)
