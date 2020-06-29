@@ -263,6 +263,9 @@ class unit_cell(object):
                 structure : either
                                 - number of space group
                             or
+                                - pair (space group number, space group symbol)
+                                  to specify setting
+                            or
                                 - path to .cif-file
         """
         self.sg_sym = None
@@ -636,7 +639,8 @@ class unit_cell(object):
 
     def get_tensor_symmetry(self, labels = None):
         """
-            Applies Site Symmetries of the Space Group to the Scattering Tensors.
+            Applies Site Symmetries of the Space Group to the Tensors.
+            (formfactors and Debye Waller U)
         """
         if labels == None:
             labels = self.U.keys()
@@ -793,7 +797,8 @@ class unit_cell(object):
 
     def build_unit_cell(self):
         """
-            Generates all Atoms of the Unit Cell.
+            Generates all Atoms (orbit) of the Unit Cell with their
+            corresponding tensor quantities
         """
         self.multiplicity = collections.defaultdict(int)
         self.positions = collections.defaultdict(list)
@@ -922,7 +927,7 @@ class unit_cell(object):
 
     def get_stoichiometry(self):
         """
-            Returns the stoichiometry of the current sample
+            Returns the stoichiometry of the structure
         """
         self.get_density()
         return self.SumFormula
@@ -1075,6 +1080,9 @@ class unit_cell(object):
         return self.F_0
 
     def hkl(self, *miller, **kw):
+        """
+            Set or get the current Miller indices hkl.
+        """
         if miller:
             self.subs.update(zip(self.miller, miller))
         elif kw:
@@ -1179,6 +1187,10 @@ class unit_cell(object):
 
 
     def transform_rec_lat_vec(self, miller, psi=0, inv=False):
+        """
+            Transforms a reciprocal lattice vector to a laboratory 
+            coordinate system as defined in: https://doi.org/10.1107/S0108767391011509
+        """
         assert len(miller)==3, "Input has to be vector of length 3."
         miller = sp.Matrix(miller)
         if not hasattr(self, "Q"):
@@ -1308,7 +1320,11 @@ class unit_cell(object):
 
     def feed_feff(self, label, energy, fprime, fsecond, fit=True):
         """
-            Input function for dispersion fine structure:
+            Input function for dispersion fine structure (f', f'')
+            for a certain atom indicated by `label`.
+            
+            The `fit` argument specifies whether to scale the fine
+            structure in order to fit the tabulated values.
         """
 
         if label not in self.elements:
@@ -1476,6 +1492,10 @@ class unit_cell(object):
 
     def get_absorption_isotropic(self, energy, density=None, table="Sasaki",
                                        fwhm_ev=0.25, f1f2=None):
+        """
+            Returns the linear *photoelectric* absorption coefficient of the
+            structure for a given energy range. The result is given in 1/m.
+        """
         self.get_density()
         if density is None:
             density = float(self.density.subs(self.subs).n())
@@ -1890,7 +1910,8 @@ class unit_cell(object):
         return self.F_0.subs(self.subs).subs(self.subs)
 
 
-    def get_stereographic_projection(self, pole, azi_ref, energy, tthmin=0, tthmax=sp.pi, Ithresh=0.01, verbose=False):
+    def get_stereographic_projection(self, pole, azi_ref, energy, tthmin=0, 
+                                     tthmax=sp.pi, Ithresh=0.01, verbose=False):
         """
             Calculates the 2D positions of all reciprocal lattice points on a
             stereographic projection in polar coordinates (r, phi).
