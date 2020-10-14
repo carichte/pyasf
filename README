@@ -9,7 +9,7 @@ Website: http://desy.de/~crichter/
 
 
 Requirements:
-    - python 2
+    - python 3
     - Python Packages:
         - numpy
         - sympy
