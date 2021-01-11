@@ -417,8 +417,8 @@ class unit_cell(object):
         U = sp.zeros(3,3)
         for i,j in itertools.product(ind, ind):
             if i<=j:
-                Sym = sp.Symbol("U_%s_%i%i"%(label, i+1, j+1), real=True) #, positive=(i==j))
-                # positive produces problems when solving tensor symmetry :/
+                positive = True if (i==j) else None
+                Sym = sp.Symbol("U_%s_%i%i"%(label, i+1, j+1), real=True, positive=positive)
                 self.S[Sym.name] = Sym
                 U[i,j] = U[j,i] = Sym
         self.U[label] = U
@@ -1233,7 +1233,7 @@ class unit_cell(object):
             theta = self.theta
             k = self.energy / self.eV_A
         else:
-            theta = sp.Symbol("theta_B", real=True)
+            theta = sp.Symbol("theta_B", real=True, positive=True)
             k = sp.Symbol("k", real=True, positive=True)
             self.S[theta.name] = theta
             self.S[k.name] = k
