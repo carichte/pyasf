@@ -36,6 +36,9 @@ from . import FormFactors
 #mydict = dict({"Abs":abs})
 #epsilon=1.e-10
 
+import rexs.xray.interactions as xi
+
+
 """
     TODO:
         DQ part imaginary?
@@ -384,8 +387,10 @@ class unit_cell(object):
                     atom.
         """
 
-        if not isinstance(label, six.string_types): raise TypeError("Invalid label. Need string.")
-        if len(position) is not 3: raise TypeError("Enter 3D position object!")
+        if not isinstance(label, six.string_types):
+            raise TypeError("Invalid label. Need string.")
+        if len(position) != 3:
+            raise TypeError("Enter 3D position object!")
         position = list(position)
         for i in range(3):
             if isinstance(position[i], six.string_types):
@@ -906,7 +911,6 @@ class unit_cell(object):
         """
             Calculates the density in g/cm^3 from the structure.
         """
-        import rexs.xray.interactions as xi
         assert hasattr(self, "positions"), \
             "Unable to find atom positions. Did you forget to perform the unit_cell.build_unit_cell() method?"
         self.species = np.unique(list(self.elements.values()))
@@ -1322,7 +1326,7 @@ class unit_cell(object):
         """
             Input function for dispersion fine structure (f', f'')
             for a certain atom indicated by `label`.
-            
+
             The `fit` argument specifies whether to scale the fine
             structure in order to fit the tabulated values.
         """
@@ -1348,15 +1352,55 @@ class unit_cell(object):
 
 
 
-    def get_f1f2_isotropic(self, energy, fwhm_ev=1e-4, table="Sasaki", feff=True):
+    def get_f1f2_isotropic(self, energy, fwhm_ev=None,
+                           table="Sasaki", feff=True, force_reload=False):
+        """
+            Method to fetch dispersion correction values from database.
+            The data is cached in and used for interpolation in the
+            following calls.
+
+            Inputs:
+                energy : ndarray 1d
+                    Photon energy values in eV.
+                fwhm_ev : float
+                    Width for gaussian broadening of the results.
+                    default: 0.1
+                table : string
+                    Database to take f1,f2 values from. Available databases
+                    listed in `rexs.xray.interactions.supported_tables`.
+                feff : bool
+                    Whether to use fine structure (effective f) that
+                    was previously put in via `unit_cell.feed_feff`.
+                force_reload : bool
+                    If true, don't use cached table data.
+        """
+
         energy = np.array(energy, dtype=float, ndmin=1)
         isort = energy.argsort()
         emin, emax = energy[isort[[0, -1]]]
         atoms = list(self.AU_positions)
-        if not hasattr(self, "_ftab") or \
-           not set(self._ftab.atoms).issuperset(atoms) or \
-           emin < self._ftab.x[0] or \
-           emax > self._ftab.x[-1]:
+
+        if fwhm_ev is None:
+            if hasattr(self, "_ftab"):
+                fwhm_ev = self._ftab.fwhm_ev
+            else:
+                fwhm_ev = 0.1
+
+        if force_reload:
+            pass
+        elif not hasattr(self, "_ftab"):
+            force_reload = True
+        elif not set(self._ftab.atoms).issuperset(atoms):
+            force_reload = True
+        elif emin < self._ftab.x[0] or emax > self._ftab.x[-1]:
+            force_reload = True
+        elif self._ftab.table != table:
+            force_reload = True
+        elif not np.allclose(self._ftab.fwhm_ev, fwhm_ev):
+            force_reload = True
+
+
+        if force_reload:
             fwhm_ev = abs(fwhm_ev)
             if table=="deltafquad": # get resonant energies
                 from rexs.xray import deltaf
@@ -1386,7 +1430,6 @@ class unit_cell(object):
                                                     fwhm_ev, f1f2="f2")
                     ff_list.append(f1 + 1j*f2)
                 else:
-                    import rexs.xray.interactions as xi
                     f1, f2 = xi.get_f1f2_from_db(element, newenergy - dE,
                                                                table=table)
                     if fwhm_ev>0:
@@ -1398,6 +1441,8 @@ class unit_cell(object):
                     ff_list.append(f1-Z + 1j*f2)
             self._ftab = interp1d(newenergy, ff_list, kind="linear")
             self._ftab.atoms = atoms
+            self._ftab.fwhm_ev = fwhm_ev
+            self._ftab.table = table
 
         f = self._ftab(energy)
         f =  dict(zip(self._ftab.atoms, f))
@@ -1491,7 +1536,7 @@ class unit_cell(object):
 
 
     def get_absorption_isotropic(self, energy, density=None, table="Sasaki",
-                                       fwhm_ev=0.25, f1f2=None):
+                                       fwhm_ev=None, f1f2=None):
         """
             Returns the linear *photoelectric* absorption coefficient of the
             structure for a given energy range. The result is given in 1/m.
@@ -1527,7 +1572,7 @@ class unit_cell(object):
 
 
     def DAFS(self, energy, miller, DD=False, DQ=False, Temp=True, psi=0,
-             func_output=False, fwhm_ev=0.25, table="Sasaki", channel="ss",
+             func_output=False, fwhm_ev=None, table="Sasaki", channel="ss",
              simplify=True, subs=True, force_refresh=True, Uaniso=True):
         """
             Calculates a Diffraction Anomalous Fine Structure (DAFS) curve for
@@ -1746,7 +1791,6 @@ class unit_cell(object):
         if mass != None:
             self.masses[element] = mass
         elif not element in self.masses:
-            import rexs.xray.interactions as xi
             self.masses[element] = xi.get_element(element)[1]
 
         m = self.masses[element]
@@ -1827,7 +1871,6 @@ class unit_cell(object):
         return self.E
 
     def eval_AAS(self, energy=None, table="Sasaki"):
-        import rexs.xray.interactions as xi
         if energy!=None:
             self.subs[self.energy] = energy
         else:
@@ -1866,7 +1909,6 @@ class unit_cell(object):
 
     def get_F0(self, miller=None, energy=None, resonant=True, table="Sasaki",
                      equivalent=False, Temp=False):
-        import rexs.xray.interactions as xi
         if energy!=None:
             self.subs[self.energy] = energy
         else:
