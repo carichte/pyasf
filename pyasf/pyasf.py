@@ -417,7 +417,12 @@ class unit_cell(object):
             self.charges[label] = int(charge)
 
         self.occupancy[label] = occupancy
-
+        
+        if assume_complex:
+            my_ff_args = dict({"complex":True})
+        else:
+            my_ff_args = dict({"real":True})
+            
         ind = range(3)
         U = sp.zeros(3,3)
         for i,j in itertools.product(ind, ind):
@@ -429,10 +434,7 @@ class unit_cell(object):
         self.U[label] = U
 
         ### FORM FACTORS:
-        if assume_complex:
-            my_ff_args = dict({"complex":True})
-        else:
-            my_ff_args = dict({"real":True})
+
         if isotropic:
             Sym = sp.Symbol("f_" + element, **my_ff_args)
             if Sym.name in self.S:
@@ -442,7 +444,7 @@ class unit_cell(object):
             self.AU_formfactors[label] = Sym
         else:
             self.resonant = element
-            Sym = sp.Symbol("f_" + label + "_0", real=True, positive=True)
+            Sym = sp.Symbol("f_" + label + "_0", **my_ff_args)
             self.S[Sym.name] = Sym
             self.AU_formfactors[label] = Sym
             f_DD = np.zeros((3,3), dtype=object)
