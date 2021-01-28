@@ -647,6 +647,10 @@ class unit_cell(object):
 
 
     def write_cif(self, path):
+        """
+            Write structural data to .cif file.
+            Structure will be defined by asymmetric unit (AU_positions)
+        """
         lines = []
 
         lines.append("#" + 72*"=")
@@ -703,12 +707,12 @@ class unit_cell(object):
         lines.append("_atom_site_B_iso_or_equiv")
         lines.append("_atom_site_occupancy")
         for label in self.AU_positions:
-            pos = self.AU_positions[label]
+            pos = self.AU_positions[label].subs(self.subs)
             charge = self.charges[label]
             symbol = self.elements[label] + "%i"%abs(charge) + ["_", "+", "-"][np.sign(charge)]
             line = [label, symbol, "%i"%self.multiplicity[label], "?"]
-            line.extend(["%g"%p for p in pos])
-            line.append("%g"%(self.Uiso.get(label, 0)*8*np.pi**2))
+            line.extend(["%.6g"%float(p) for p in pos])
+            line.append("%.6g"%(self.Uiso.get(label, 0)*8*np.pi**2))
             line.append("%g"%self.occupancy[label])
             line = ["%8s"%w for w in line]
             lines.append(" ".join(line))
@@ -744,6 +748,8 @@ class unit_cell(object):
 
         with open(path, "w") as fh:
             fh.writelines([(l+os.linesep) for l in lines])
+
+        print("Written data to %s"%path)
 
 
     def get_tensor_symmetry(self, labels = None):
