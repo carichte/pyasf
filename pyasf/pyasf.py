@@ -848,7 +848,7 @@ class unit_cell(object):
                 ffSym.update(np.ravel(self.AU_formfactorsDQc.get(label, 0)))
                 ffSym = [s for s in ffSym if s.is_Symbol]
                 #ffSym = [Sym S in self.S.iteritems() if k.startswith("f_")]
-                symmetries =  sp.solve( equations, ffSym, dict=True, manual=True)
+                symmetries =  sp.solve( equations, set(ffSym), dict=True, manual=True)
                 self._symmetries[label] = symmetries = symmetries[0]
                 if self.DEBUG:
                     print(symmetries)
@@ -861,7 +861,7 @@ class unit_cell(object):
                 applymethod(self.AU_formfactorsDDc[label], "simplify")
                 applymethod(self.AU_formfactorsDQc[label], "simplify")
 
-            Usymmetries = sp.solve(Uequations, sp.flatten(U), dict=True, manual=True)
+            Usymmetries = sp.solve(Uequations, set(sp.flatten(U)), dict=True, manual=True)
             if Usymmetries:
                 self._Usymmetries[label] = Usymmetries = Usymmetries[0]
                 self.U[label] = U.subs(Usymmetries)
