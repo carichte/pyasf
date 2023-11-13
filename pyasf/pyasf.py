@@ -14,6 +14,7 @@ import sympy as sp
 import numpy as np
 import difflib
 import collections
+from collections.abc import Sequence
 import CifFile
 
 if six.PY2:
@@ -1158,7 +1159,7 @@ class unit_cell(object):
 
         if subs is True:
             self.F_0 = self.F_0.subs(self.subs)
-        elif isinstance(subs, collections.Sequence):
+        elif isinstance(subs, Sequence):
             subitems = [(k, self.subs[k]) for k in subs]
             self.F_0 = self.F_0.subs(subitems)
 
